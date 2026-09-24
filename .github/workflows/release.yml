@@ -2,14 +2,15 @@ name: release
 
 # 推送 v* 标签时：跑单元测试，打包通用二进制的 ProxySwitch.app（版本号取自标签），
 # 用 CHANGELOG.md 里对应版本的内容创建 GitHub Release 并上传 zip 和校验和。
-# Release 先以草稿创建，附件上传完才发布。也可以在 Actions 页面手动运行，填一个已有的标签重新上传附件。
+# Release 先以草稿创建，附件上传完才发布。
+# 也可以在 Actions 页面手动运行：填一个标签名，标签不存在时在所选分支的最新提交上创建并推送，存在时重新上传附件。
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "要发布的标签，例如 v0.1.0"
+        description: "要发布的标签，例如 v0.1.0；不存在时在当前分支的最新提交上创建"
         required: true
         type: string
 
@@ -25,8 +26,17 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TAG }}
+      - name: 确定要发布的提交
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "标签 $TAG 已存在，在它上面发布"
+            git fetch --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
+            git checkout -q "$TAG"
+          else
+            echo "标签 $TAG 不存在，在 $(git rev-parse --short HEAD) 上创建"
+            git tag "$TAG"
+            git push origin "refs/tags/$TAG"
+          fi
       - name: 选择最新的 Xcode
         run: |
           latest=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
