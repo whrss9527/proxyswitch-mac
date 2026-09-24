@@ -339,7 +339,7 @@ final class ParsingTests: XCTestCase {
         var fileEngine = EngineConfig()
         fileEngine.subscriptions = [Subscription(name: "f", url: "file:///tmp/nodes.txt")]
         let fileYAML = CoreConfigBuilder.yaml(CoreConfigBuilder.Input(engine: fileEngine, secret: "s", directory: URL(fileURLWithPath: "/tmp/core"), testURL: "https://t", rules: []))
-        XCTAssertTrue(fileYAML.contains("    type: file\n    path: \"/tmp/nodes.txt\"\n"))
+        XCTAssertTrue(fileYAML.contains("    type: file\n    path: \"/tmp/core/providers/\(fileEngine.subscriptions[0].providerName).yaml\"\n"))
         XCTAssertFalse(fileYAML.contains("interval: 86400"))
         var engine = EngineConfig()
         XCTAssertFalse(engine.wantsCore)

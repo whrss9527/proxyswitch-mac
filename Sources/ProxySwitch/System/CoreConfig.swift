@@ -41,11 +41,12 @@ enum CoreConfigBuilder {
             lines.append("proxy-providers:")
             for subscription in providers {
                 lines.append("  \(subscription.providerName):")
-                if let filePath = subscription.filePath {
+                // 内核只读它自己目录下的文件：file:// 订阅由 Engine 先复制到 providers/ 里。
+                let path = providerPath(for: subscription, directory: input.directory).path
+                if subscription.filePath != nil {
                     lines.append("    type: file")
-                    lines.append("    path: \(quote(filePath))")
+                    lines.append("    path: \(quote(path))")
                 } else {
-                    let path = input.directory.appendingPathComponent("providers/\(subscription.providerName).yaml").path
                     lines.append("    type: http")
                     lines.append("    url: \(quote(subscription.url))")
                     lines.append("    path: \(quote(path))")
@@ -83,6 +84,11 @@ enum CoreConfigBuilder {
             lines.append("  - \(quote(rule))")
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// 订阅在内核目录里的文件。
+    static func providerPath(for subscription: Subscription, directory: URL) -> URL {
+        directory.appendingPathComponent("providers/\(subscription.providerName).yaml")
     }
 
     /// YAML 的双引号字符串。

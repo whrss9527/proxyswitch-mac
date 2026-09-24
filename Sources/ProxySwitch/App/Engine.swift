@@ -214,7 +214,8 @@ final class Engine: ObservableObject {
     }
 
     private func coreExited(_ code: Int32) {
-        guard api != nil else { return }
+        // 启动阶段的退出由 startCore 自己处理（配置错误时反复重启没有意义）。
+        guard api != nil, status != .starting else { return }
         api = nil
         lastConfigText = nil
         if engineConfig.wantsCore && restartAttempts < 3 {
@@ -229,6 +230,18 @@ final class Engine: ObservableObject {
             status = .failed("内核退出了（状态 \(code)）：\(runner.logTail.split(separator: "\n").suffix(2).joined(separator: " "))")
         }
         onStatusChanged?()
+    }
+
+    /// file:// 订阅复制到内核目录里（内核不读别处的文件）。
+    private func copyFileSubscriptions(_ engine: EngineConfig) throws {
+        let fm = FileManager.default
+        for subscription in engine.activeSubscriptions {
+            guard let source = subscription.filePath else { continue }
+            let target = CoreConfigBuilder.providerPath(for: subscription, directory: Self.directory)
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let data = try Data(contentsOf: URL(fileURLWithPath: source))
+            try data.write(to: target, options: .atomic)
+        }
     }
 
     private func prepareDirectory() throws {
@@ -262,6 +275,7 @@ final class Engine: ObservableObject {
     // MARK: - 配置生成
 
     private func generateConfig(_ engine: EngineConfig) async throws -> String {
+        try copyFileSubscriptions(engine)
         let rules = try await rules(for: engine)
         let input = CoreConfigBuilder.Input(engine: engine, secret: secret, directory: Self.directory, testURL: readConfig().testURL, rules: rules)
         return CoreConfigBuilder.yaml(input)
@@ -428,11 +442,14 @@ final class Engine: ObservableObject {
         writeEngine?(engine)
     }
 
-    /// 让内核重新下载订阅。
+    /// 让内核重新下载订阅（file:// 的先重新复制）。
     func updateSubscription(_ id: UUID) async {
         guard let api, let subscription = engineConfig.subscriptions.first(where: { $0.id == id }) else { return }
         updatingSubscription = id
         do {
+            if subscription.filePath != nil {
+                try copyFileSubscriptions(engineConfig)
+            }
             try await api.updateProvider(subscription.providerName)
             await refresh()
             Log.info("订阅「\(subscription.name)」已更新")
