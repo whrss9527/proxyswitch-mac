@@ -49,7 +49,7 @@ enum SpeedFormatter {
         if value < 1000 {
             text = "\(value)B"
         } else {
-            let units: [(Double, String)] = [(1 << 30, "G"), (1 << 20, "M"), (1 << 10, "K")]
+            let units: [(Double, String)] = [(1_073_741_824, "G"), (1_048_576, "M"), (1024, "K")]
             var chosen = "\(value)B"
             for (size, unit) in units where Double(value) >= size * 0.9995 {
                 let scaled = Double(value) / size
