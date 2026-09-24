@@ -117,11 +117,13 @@ struct PersistedState: Codable, Equatable {
     var lastProfileID: UUID?
     var enabledByUs: Bool = false
     var original: ProxySnapshot?
+    /// iCloud 同步的开关是本机的，不跟着配置同步。
+    var syncEnabled: Bool = false
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case lastProfileID, enabledByUs, original
+        case lastProfileID, enabledByUs, original, syncEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -129,5 +131,6 @@ struct PersistedState: Codable, Equatable {
         lastProfileID = try container.decodeIfPresent(UUID.self, forKey: .lastProfileID)
         enabledByUs = try container.decodeIfPresent(Bool.self, forKey: .enabledByUs) ?? false
         original = try container.decodeIfPresent(ProxySnapshot.self, forKey: .original)
+        syncEnabled = try container.decodeIfPresent(Bool.self, forKey: .syncEnabled) ?? false
     }
 }

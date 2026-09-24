@@ -41,6 +41,7 @@ final class AppState: ObservableObject {
     @Published var testResults: [UUID: TestResult] = [:]
     @Published var loginItemEnabled = false
     let updater = Updater()
+    let sync = CloudSync()
     /// 更新后正在重新启动：退出时不要按「退出时关闭代理」清理。
     var relaunching = false
 
@@ -91,6 +92,19 @@ final class AppState: ObservableObject {
             NSApp.terminate(nil)
         }
         updater.startAutomaticChecks { [weak self] in self?.config.autoCheckUpdates ?? true }
+        sync.currentConfig = { [weak self] in self?.config ?? AppConfig() }
+        sync.applyRemote = { [weak self] config in self?.applyRemoteConfig(config) }
+        sync.onEnabledChanged = { [weak self] enabled in
+            guard let self else { return }
+            self.persisted.syncEnabled = enabled
+            Store.save(self.persisted)
+        }
+        $config
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] config in Task { @MainActor in self?.sync.localChanged(config) } }
+            .store(in: &cancellables)
+        sync.start(enabled: persisted.syncEnabled)
     }
 
     // MARK: - 状态
@@ -317,6 +331,23 @@ final class AppState: ObservableObject {
 
     func move(from source: IndexSet, to destination: Int) {
         config.profiles.move(fromOffsets: source, toOffset: destination)
+    }
+
+    /// 来自 iCloud 的配置：整个换掉。正在使用的配置如果改了地址就重新应用，被删了就关闭代理。
+    private func applyRemoteConfig(_ remote: AppConfig) {
+        let active: Profile? = {
+            if case .on(let profile) = status { return profile }
+            return nil
+        }()
+        config = remote
+        guard let active else { return }
+        if let updated = remote.profile(id: active.id) {
+            if updated != active {
+                turnOn(updated)
+            }
+        } else {
+            turnOff()
+        }
     }
 
     /// 把别的程序设置的系统代理保存成配置。

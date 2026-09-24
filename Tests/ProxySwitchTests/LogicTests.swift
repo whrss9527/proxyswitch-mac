@@ -218,6 +218,44 @@ final class ParsingTests: XCTestCase {
         XCTAssertEqual(Installability.check(bundleURL: URL(fileURLWithPath: "/Users/me/.build/debug")), .notBundle)
     }
 
+    func testSyncedConfigRoundTripAndMerge() throws {
+        var config = AppConfig()
+        config.profiles = [Profile(name: "a", color: "#111111", kind: .socks5, host: "h", port: 1)]
+        let synced = SyncedConfig(updatedAt: Date(timeIntervalSince1970: 1_800_000_000), device: "MacBook", config: config)
+        let data = try CloudFile.encoder.encode(synced)
+        let decoded = try CloudFile.decoder.decode(SyncedConfig.self, from: data)
+        XCTAssertEqual(decoded, synced)
+        // 只有 config 的老文件也能读。
+        let minimal = try CloudFile.decoder.decode(SyncedConfig.self, from: Data(#"{"config":{"profiles":[]}}"#.utf8))
+        XCTAssertEqual(minimal.device, "未知设备")
+        XCTAssertEqual(minimal.updatedAt, .distantPast)
+
+        let shared = Profile(name: "共有", color: "#111111", host: "1.1.1.1", port: 1)
+        var local = AppConfig()
+        local.profiles = [shared, Profile(name: "本机独有", color: "#222222", host: "2.2.2.2", port: 2), Profile(name: "同名同地址", color: "#333333", host: "3.3.3.3", port: 3)]
+        local.offMode = .restore
+        var cloud = AppConfig()
+        cloud.profiles = [Profile(name: "云端独有", color: "#444444", host: "4.4.4.4", port: 4), shared, Profile(name: "同名同地址", color: "#555555", host: "3.3.3.3", port: 3)]
+        cloud.offMode = .direct
+        let merged = local.merging(cloud: cloud)
+        XCTAssertEqual(merged.profiles.map(\.name), ["云端独有", "共有", "同名同地址", "本机独有"])
+        XCTAssertEqual(merged.offMode, .restore)
+
+        let older = SyncedConfig(updatedAt: Date(timeIntervalSince1970: 1), device: "old", config: AppConfig())
+        let newer = SyncedConfig(updatedAt: Date(timeIntervalSince1970: 2), device: "new", config: AppConfig())
+        XCTAssertEqual(CloudFile.newest([older, newer, older])?.device, "new")
+        XCTAssertNil(CloudFile.newest([]))
+    }
+
+    func testDriveDetection() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("home-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        XCTAssertNil(CloudFile.driveURL(home: home))
+        let drive = home.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs", isDirectory: true)
+        try FileManager.default.createDirectory(at: drive, withIntermediateDirectories: true)
+        XCTAssertEqual(CloudFile.driveURL(home: home)?.lastPathComponent, "com~apple~CloudDocs")
+    }
+
     func testReleaseNotesCleaning() {
         let notes = "## 0.2.0\r\n\r\n- 一键更新\r\n  * 子项\r\n普通一行"
         XCTAssertEqual(ReleaseNotes.cleaned(notes), "0.2.0\n\n• 一键更新\n• 子项\n普通一行")
@@ -253,6 +291,82 @@ final class ParsingTests: XCTestCase {
         var empty = Profile(name: "e", color: "#000")
         empty.targets = []
         XCTAssertNotNil(empty.validate())
+    }
+
+    @MainActor
+    func testCloudSyncPullAndPush() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("sync-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("config.json")
+        var remoteConfig = AppConfig()
+        remoteConfig.profiles = [Profile(name: "云端", color: "#111111", host: "10.0.0.1", port: 8080)]
+        try CloudFile.write(SyncedConfig(updatedAt: Date(), device: "另一台 Mac", config: remoteConfig), to: file)
+
+        let sync = CloudSync(folder: folder)
+        var current = AppConfig()
+        var applied: AppConfig?
+        var enabledFlags: [Bool] = []
+        sync.currentConfig = { current }
+        sync.applyRemote = { applied = $0; current = $0 }
+        sync.onEnabledChanged = { enabledFlags.append($0) }
+
+        // 启动时按记录的开关恢复：读到云端的配置就应用。
+        sync.start(enabled: true)
+        await sync.syncNow()
+        XCTAssertEqual(applied, remoteConfig)
+        guard case .synced(_, let device) = sync.status else { return XCTFail("状态不对：\(sync.status)") }
+        XCTAssertEqual(device, "另一台 Mac")
+
+        // 本机改动稍后写到云端。
+        current.profiles.append(Profile(name: "本机", color: "#222222", host: "10.0.0.2", port: 9090))
+        sync.localChanged(current)
+        try await Task.sleep(for: .seconds(2))
+        let written = try XCTUnwrap(try CloudFile.read(at: file))
+        XCTAssertEqual(written.config, current)
+        XCTAssertEqual(written.device, CloudFile.deviceName)
+
+        // 关掉后不再写。
+        sync.disable()
+        XCTAssertEqual(enabledFlags, [false])
+        XCTAssertEqual(sync.status, .off)
+        current.profiles.removeAll()
+        sync.localChanged(current)
+        try await Task.sleep(for: .seconds(1.5))
+        XCTAssertEqual(try CloudFile.read(at: file)?.config.profiles.count, 2)
+    }
+
+    @MainActor
+    func testCloudSyncEnableAsksWhenCloudDiffers() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("sync-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("config.json")
+        var remoteConfig = AppConfig()
+        remoteConfig.profiles = [Profile(name: "云端", color: "#111111", host: "10.0.0.1", port: 8080)]
+        try CloudFile.write(SyncedConfig(updatedAt: Date(), device: "另一台 Mac", config: remoteConfig), to: file)
+
+        let sync = CloudSync(folder: folder)
+        var current = AppConfig()
+        current.profiles = [Profile(name: "本机", color: "#222222", host: "10.0.0.2", port: 9090)]
+        sync.currentConfig = { current }
+        sync.applyRemote = { current = $0 }
+        await sync.enable()
+        XCTAssertFalse(sync.enabled)
+        XCTAssertEqual(sync.pending?.device, "另一台 Mac")
+
+        sync.resolve(.merge)
+        XCTAssertNil(sync.pending)
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertTrue(sync.enabled)
+        XCTAssertEqual(current.profiles.map(\.name), ["云端", "本机"])
+        let written = try XCTUnwrap(try CloudFile.read(at: file))
+        XCTAssertEqual(written.config.profiles.map(\.name), ["云端", "本机"])
+
+        // 云端没有文件时直接开启并把本机的写上去。
+        let empty = CloudSync(folder: folder.appendingPathComponent("empty", isDirectory: true))
+        empty.currentConfig = { current }
+        await empty.enable()
+        XCTAssertTrue(empty.enabled)
+        XCTAssertEqual(try CloudFile.read(at: folder.appendingPathComponent("empty/config.json"))?.config, current)
     }
 
     func testConfigRoundTrip() throws {

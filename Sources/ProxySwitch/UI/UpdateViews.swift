@@ -200,13 +200,12 @@ struct UpdateSection: View {
                     .foregroundStyle(.secondary)
             }
             if !release.notes.isEmpty {
-                ScrollView {
-                    ReleaseNotes(text: release.notes)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: 150)
-                .padding(10)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.05)))
+                ReleaseNotes(text: release.notes)
+                    .lineLimit(12)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.05)))
             }
             let problem = updater.installProblem ?? (release.canInstall ? nil : UpdateError.noArchive.localizedDescription)
             if let problem {

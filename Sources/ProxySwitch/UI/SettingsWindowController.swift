@@ -5,6 +5,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case profiles
     case general
     case hotkey
+    case sync
     case diagnostics
     case about
 
@@ -15,6 +16,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .profiles: return "代理配置"
         case .general: return "通用"
         case .hotkey: return "快捷键"
+        case .sync: return "iCloud 同步"
         case .diagnostics: return "诊断"
         case .about: return "关于"
         }
@@ -25,6 +27,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .profiles: return "point.3.connected.trianglepath.dotted"
         case .general: return "gearshape"
         case .hotkey: return "keyboard"
+        case .sync: return "icloud"
         case .diagnostics: return "stethoscope"
         case .about: return "info.circle"
         }
@@ -124,6 +127,7 @@ struct SettingsRootView: View {
         case .profiles: ProfilesPage(state: state, navigation: navigation)
         case .general: GeneralPage(state: state)
         case .hotkey: HotkeyPage(state: state)
+        case .sync: SyncPage(state: state, sync: state.sync)
         case .diagnostics: DiagnosticsPage(state: state)
         case .about: AboutPage(state: state)
         }

@@ -18,6 +18,7 @@ Windows 版在 [proxyswitch](https://github.com/whrss9527/proxyswitch)，两边�
 - **全局快捷键**：默认 ⌃⌥P 开关代理，可以在设置里录制新的。
 - **登录时启动**：系统设置的「登录项」里可以看到和关闭。
 - **命令**：`open proxyswitch://toggle`、`proxyswitch://on`、`proxyswitch://off`、`proxyswitch://use?name=配置名`、`proxyswitch://settings`、`proxyswitch://update`，可以接快捷指令和脚本。
+- **iCloud 同步**：打开后代理配置和设置通过 iCloud 云盘（`iCloud 云盘/ProxySwitch/config.json`）在多台 Mac 之间同步，几秒内生效；另一台 Mac 开启时可以选用 iCloud 的、用本机的或合并，两边同时改以改动时间晚的为准。
 - **检查更新与一键更新**：启动后和每 6 小时检查一次 GitHub 上的新版本（可以关掉），有新版本时通知、面板里出现更新条。点「更新」会下载 zip、比对 SHA-256、就地替换 `ProxySwitch.app` 并自动重新启动；装在「应用程序」里的标准账户会弹一次系统授权对话框。
 
 ## 安装
@@ -30,6 +31,7 @@ Windows 版在 [proxyswitch](https://github.com/whrss9527/proxyswitch)，两边�
 ## 权限说明
 
 - 修改系统代理需要**管理员账户**。标准账户会弹出系统的授权对话框，输入一次管理员密码。
+- iCloud 同步用的是 iCloud 云盘里的普通文件夹（没有开发者签名拿不到 iCloud 的 entitlement），第一次开启时系统可能会询问是否允许访问 iCloud 云盘。
 - 全局快捷键用 Carbon 的热键接口，不需要辅助功能权限。
 - 通知需要在第一次弹出时允许。
 
@@ -61,7 +63,7 @@ VERSION=0.1.0 Scripts/build-app.sh   # 组装通用二进制的 dist/ProxySwitch
 
 推送代码时 GitHub Actions 会在 macOS 上编译、测试、打包并启动一次截图，然后用本地 HTTP 服务器假装发布一个 9.9.9 版本，走一遍下载、校验、替换、重新启动的完整更新流程；推送 `v*` 标签会自动打包并发布 Release。
 
-本机调试更新流程时可以把环境变量 `PROXYSWITCH_UPDATE_URL` 指向一个返回 GitHub releases 格式 JSON 的地址（见 `.github/workflows/ci.yml` 里的做法）。
+本机调试更新流程时可以把环境变量 `PROXYSWITCH_UPDATE_URL` 指向一个返回 GitHub releases 格式 JSON 的地址；调试 iCloud 同步时可以用 `PROXYSWITCH_SYNC_DIR` 把同步文件夹指到任意目录（见 `.github/workflows/ci.yml` 里的做法）。
 
 ## 许可证
 
