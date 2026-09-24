@@ -127,10 +127,17 @@ enum TerminalCommands {
     }
 }
 
+/// 项目地址；换仓库只需要改这里。
+enum AppInfo {
+    static let repository = "whrss9527/proxyswitch-mac"
+    static var repositoryURL: URL { URL(string: "https://github.com/\(repository)")! }
+    static var issuesURL: URL { URL(string: "https://github.com/\(repository)/issues")! }
+}
+
 /// 检查 GitHub 上的新版本（只提示，不自动安装）。
 enum UpdateChecker {
-    static let releasesURL = URL(string: "https://github.com/whrss9527/proxyswitch/releases")!
-    static let apiURL = URL(string: "https://api.github.com/repos/whrss9527/proxyswitch/releases/latest")!
+    static var releasesURL: URL { URL(string: "https://github.com/\(AppInfo.repository)/releases")! }
+    static var apiURL: URL { URL(string: "https://api.github.com/repos/\(AppInfo.repository)/releases/latest")! }
 
     static var currentVersion: String {
         (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.0.0"

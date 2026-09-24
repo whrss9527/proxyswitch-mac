@@ -1,5 +1,7 @@
 .build/
 dist/
-*.xcodeproj
-.swiftpm/
 screenshots/
+.swiftpm/
+*.xcodeproj
+.DS_Store
+__pycache__/

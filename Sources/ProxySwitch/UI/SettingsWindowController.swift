@@ -357,8 +357,8 @@ struct AboutPage: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 360)
                 HStack(spacing: 10) {
-                    Button("GitHub") { NSWorkspace.shared.open(URL(string: "https://github.com/whrss9527/proxyswitch")!) }
-                    Button("反馈问题") { NSWorkspace.shared.open(URL(string: "https://github.com/whrss9527/proxyswitch/issues")!) }
+                    Button("GitHub") { NSWorkspace.shared.open(AppInfo.repositoryURL) }
+                    Button("反馈问题") { NSWorkspace.shared.open(AppInfo.issuesURL) }
                     Button(checking ? "正在检查…" : "检查更新") {
                         checking = true
                         Task { @MainActor in
