@@ -134,21 +134,27 @@ jobs:
             if ! sips -c "$croph" "$cropw" --cropOffset 0 $((width - cropw)) panel.png --out panel-crop.png >/dev/null 2>&1; then
               cp panel.png panel-crop.png
             fi
-            sips -s format jpeg -s formatOptions 75 panel-crop.png --out panel.jpg >/dev/null
+            sips -Z 560 -s format jpeg -s formatOptions 65 panel-crop.png --out panel.jpg >/dev/null
           fi
           if [ -f panel-update.png ]; then
             width=$(sips -g pixelWidth panel-update.png | awk '/pixelWidth/{print $2}')
             if ! sips -c 760 640 --cropOffset 0 $((width - 640)) panel-update.png --out panel-update-crop.png >/dev/null 2>&1; then
               cp panel-update.png panel-update-crop.png
             fi
-            sips -s format jpeg -s formatOptions 75 panel-update-crop.png --out panel-update.jpg >/dev/null
+            sips -Z 560 -s format jpeg -s formatOptions 65 panel-update-crop.png --out panel-update.jpg >/dev/null
           fi
+          # 设置窗口居中，裁到窗口附近再缩小，日志里放得下、看得清。
           for name in settings sync about about-after; do
-            if [ -f "$name.png" ]; then
-              sips -Z 1400 -s format jpeg -s formatOptions 70 "$name.png" --out "$name.jpg" >/dev/null
+            [ -f "$name.png" ] || continue
+            width=$(sips -g pixelWidth "$name.png" | awk '/pixelWidth/{print $2}')
+            height=$(sips -g pixelHeight "$name.png" | awk '/pixelHeight/{print $2}')
+            cropw=$((width * 9 / 10)); croph=$((height * 17 / 20))
+            if ! sips -c "$croph" "$cropw" --cropOffset $((height / 20)) $(((width - cropw) / 2)) "$name.png" --out "$name-crop.png" >/dev/null 2>&1; then
+              cp "$name.png" "$name-crop.png"
             fi
+            sips -Z 1000 -s format jpeg -s formatOptions 60 "$name-crop.png" --out "$name.jpg" >/dev/null
           done
-          for name in panel-update sync about about-after panel settings; do
+          for name in sync about panel-update panel about-after settings; do
             [ -f "$name.jpg" ] || continue
             echo "=====BEGIN $name.jpg====="
             base64 -b 76 -i "$name.jpg"
