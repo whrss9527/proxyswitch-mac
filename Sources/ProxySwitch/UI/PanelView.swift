@@ -7,6 +7,8 @@ struct PanelActions {
     var quit: () -> Void
     /// 面板内容高度变了（展开节点列表等），窗口要跟着调整。
     var layoutChanged: () -> Void
+    /// SwiftUI 量出来的面板实际尺寸。
+    var sizeChanged: (CGSize) -> Void
 }
 
 /// 菜单栏面板：状态卡片和大开关、节点卡片、配置列表、快捷操作。
@@ -16,7 +18,7 @@ struct PanelView: View {
     let actions: PanelActions
     @State private var testing = false
     @State private var copied = false
-    @State private var showNodes = false
+    @AppStorage("panel.showNodes") private var showNodes = true
     @State private var nodeFilter = ""
 
     var body: some View {
@@ -43,6 +45,12 @@ struct PanelView: View {
         .frame(width: 320)
         .background(GlassPanelBackground())
         .padding(8)
+        .background(GeometryReader { proxy in
+            Color.clear.preference(key: PanelSizeKey.self, value: proxy.size)
+        })
+        .onPreferenceChange(PanelSizeKey.self) { size in
+            actions.sizeChanged(size)
+        }
     }
 
     // MARK: - 状态
@@ -159,11 +167,16 @@ struct PanelView: View {
                 Button {
                     toggleNodes()
                 } label: {
-                    Image(systemName: showNodes ? "chevron.up" : "chevron.down")
+                    HStack(spacing: 2) {
+                        Text(showNodes ? "收起" : "节点列表")
+                            .font(.system(size: 10))
+                        Image(systemName: showNodes ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help(showNodes ? "收起节点列表" : "选择节点")
+                .foregroundStyle(Color.accentColor)
+                .help(showNodes ? "收起节点列表" : "展开节点列表")
             }
             if showNodes {
                 nodeList
@@ -485,5 +498,14 @@ struct ProfileRow: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .contentShape(Rectangle())
+    }
+}
+
+/// 面板内容的实际尺寸，窗口按它调整。
+struct PanelSizeKey: PreferenceKey {
+    static let defaultValue = CGSize.zero
+
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        value = nextValue()
     }
 }

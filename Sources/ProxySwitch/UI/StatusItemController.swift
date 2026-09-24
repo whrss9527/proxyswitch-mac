@@ -271,6 +271,9 @@ final class StatusItemController: NSObject {
                     MainActor.assumeIsolated {
                         DispatchQueue.main.async { self?.resizePanelIfVisible() }
                     }
+                },
+                sizeChanged: { [weak self] size in
+                    MainActor.assumeIsolated { self?.resizePanel(to: size) }
                 }
             ))
             let hosting = NSHostingView(rootView: view)
@@ -302,12 +305,17 @@ final class StatusItemController: NSObject {
     }
 
     private func resizePanel() {
-        guard let panel, let hostingView else { return }
-        let size = hostingView.fittingSize
-        if size.width > 0 && size.height > 0 && size != panel.frame.size {
-            let origin = NSPoint(x: panel.frame.origin.x, y: panel.frame.maxY - size.height)
-            panel.setFrame(NSRect(origin: origin, size: size), display: true)
-        }
+        guard let hostingView else { return }
+        resizePanel(to: hostingView.fittingSize)
+    }
+
+    /// 顶边不动，按内容尺寸调整窗口。
+    private func resizePanel(to size: CGSize) {
+        guard let panel, size.width > 0, size.height > 0 else { return }
+        let rounded = NSSize(width: ceil(size.width), height: ceil(size.height))
+        guard rounded != panel.frame.size else { return }
+        let origin = NSPoint(x: panel.frame.origin.x, y: panel.frame.maxY - rounded.height)
+        panel.setFrame(NSRect(origin: origin, size: rounded), display: true)
     }
 
     private func position(_ panel: PanelWindow) {

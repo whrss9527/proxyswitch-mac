@@ -14,6 +14,7 @@ struct NodesPage: View {
     @State private var apiPortText = ""
     @State private var showLog = false
     @State private var logText = ""
+    @State private var nodeFilter = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,6 +22,7 @@ struct NodesPage: View {
             Form {
                 coreSection
                 subscriptionsSection
+                nodesSection
                 modeSection
                 portsSection
                 if showLog {
@@ -147,6 +149,79 @@ struct NodesPage: View {
             newURL = ""
             state.selectEngineProfile()
         }
+    }
+
+    // MARK: - 节点
+
+    private var filteredNodes: [Engine.Node] {
+        let filter = nodeFilter.trimmingCharacters(in: .whitespaces)
+        if filter.isEmpty { return engine.nodes }
+        return engine.nodes.filter { $0.name.localizedCaseInsensitiveContains(filter) || $0.subscription.localizedCaseInsensitiveContains(filter) }
+    }
+
+    private var nodesSection: some View {
+        Section("节点") {
+            if engine.nodes.isEmpty {
+                Text(engine.isRunning ? "订阅里没有解析出节点" : "内核启动后这里会列出所有节点")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack {
+                    TextField("", text: $nodeFilter, prompt: Text("搜索节点"))
+                        .labelsHidden()
+                    Button(engine.testing ? "正在测速…" : "测速全部") {
+                        Task { await engine.testAll() }
+                    }
+                    .disabled(engine.testing || !engine.isRunning)
+                }
+                nodeRow(name: Engine.autoGroup, subtitle: engine.autoNode.map { "现在用的是 \($0)" } ?? "自动选延迟最低的节点", type: "自动", delay: nil, selected: engine.currentSelection == Engine.autoGroup) {
+                    Task { await engine.select(nil) }
+                }
+                ForEach(filteredNodes) { node in
+                    nodeRow(name: node.name, subtitle: node.subscription, type: node.type, delay: node.delay, selected: engine.currentSelection == node.name) {
+                        Task { await engine.select(node.name) }
+                    }
+                }
+                Text("点一行就切换到那个节点。面板里的节点卡片和右键菜单的「节点」子菜单里也能切。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func nodeRow(name: String, subtitle: String, type: String, delay: Int?, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            state.selectEngineProfile()
+            action()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary.opacity(0.5))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(name)
+                        .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(type.uppercased())
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+                if let delay {
+                    Text(delay > 0 ? "\(delay) ms" : "超时")
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(delay <= 0 ? Color.red : (delay < 300 ? Color.green : (delay < 800 ? Color.orange : Color.red)))
+                        .frame(width: 64, alignment: .trailing)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!engine.isRunning)
     }
 
     // MARK: - 模式与规则
