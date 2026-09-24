@@ -194,7 +194,7 @@ final class CloudSync: ObservableObject {
 
     private func readCloud() async throws -> SyncedConfig? {
         guard let url = fileURL else { throw CloudFileError.unavailable }
-        return try await Task.detached(priority: .utility) {
+        return try await Task.detached(priority: .utility) { () throws -> SyncedConfig? in
             if let winner = CloudFile.resolveConflicts(at: url) {
                 return winner
             }
