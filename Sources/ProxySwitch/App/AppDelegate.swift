@@ -13,8 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private var statusController: StatusItemController?
+    private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installSignalHandlers()
         MainMenu.install()
         let state = AppState.shared
         Notifier.shared.onOpen = { route in
@@ -51,5 +53,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         AppState.shared.handleExit()
         Log.info("ProxySwitch 已退出")
+    }
+
+    /// kill、logout 这类信号也走正常退出：关代理、停内核。
+    private func installSignalHandlers() {
+        for signalNumber in [SIGTERM, SIGINT, SIGHUP] {
+            signal(signalNumber, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
+            source.setEventHandler {
+                NSApp.terminate(nil)
+            }
+            source.resume()
+            signalSources.append(source)
+        }
     }
 }

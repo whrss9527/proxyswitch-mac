@@ -47,9 +47,6 @@ jobs:
           uris.append("trojan://password@example.com:443#" + urllib.parse.quote("测试节点C"))
           open("feed0/sub.txt", "w").write(base64.b64encode("\n".join(uris).encode()).decode())
           PY
-          (cd feed0 && python3 -m http.server 8766 --bind 127.0.0.1 >/dev/null 2>&1 &)
-          sleep 1
-          echo "本地服务器（curl）：$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8766/sub.txt)"
           # 假装 iCloud 云盘里已经有另一台 Mac 同步上来的配置（多一套「iCloud 来的」），并且本机记录着同步已开启。
           cloud="$RUNNER_TEMP/fake-icloud"
           mkdir -p "$cloud"
@@ -86,8 +83,7 @@ jobs:
           done
           open "proxyswitch://settings?page=nodes"; sleep 3
           screencapture -x screenshots/nodes.png || true
-          # 诊断：经内核的代理端口访问本机和外网（只打印，不判定）。
-          echo "经内核访问本机端口：$(curl -s -m 8 -x http://127.0.0.1:7890 -o /dev/null -w '%{http_code}' http://127.0.0.1:8766/sub.txt || true)"
+          # 经内核的代理端口访问外网（假节点都连不上，自动选择会退回 DIRECT）。
           echo "经内核访问外网：$(curl -s -m 10 -x http://127.0.0.1:7890 -o /dev/null -w '%{http_code}' https://cp.cloudflare.com/generate_204 || true)"
           echo "===== 内核配置 ====="; cat "$support/core/config.yaml" | head -60
           echo "===== 内核日志 ====="; cat "$support/core/core.log" || true
@@ -98,7 +94,7 @@ jobs:
           grep -q "读取到 3 个节点" "$support/proxyswitch.log" || { echo "没有读到假订阅的 3 个节点"; exit 1; }
           grep -q '"name":"节点代理"' "$support/config.json" || grep -q '"name" : "节点代理"' "$support/config.json" || { echo "没有自动加上「节点代理」配置"; exit 1; }
           pkill -x ProxySwitch || true
-          sleep 1
+          sleep 3
           pgrep -x mihomo && { echo "程序退出后内核还在运行"; exit 1; }
           ls -la screenshots
       - uses: actions/upload-artifact@v4
