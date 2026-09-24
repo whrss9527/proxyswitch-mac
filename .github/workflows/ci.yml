@@ -49,6 +49,7 @@ jobs:
           PY
           (cd feed0 && python3 -m http.server 8766 --bind 127.0.0.1 >/dev/null 2>&1 &)
           sleep 1
+          echo "本地服务器（curl）：$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8766/sub.txt)"
           # 假装 iCloud 云盘里已经有另一台 Mac 同步上来的配置（多一套「iCloud 来的」），并且本机记录着同步已开启。
           cloud="$RUNNER_TEMP/fake-icloud"
           mkdir -p "$cloud"
@@ -58,8 +59,10 @@ jobs:
                                  {"id":"6D2F2A1E-0000-4000-8000-000000000002","name":"公司代理","color":"#2563eb","kind":"http","host":"proxy.corp.example","port":3128},
                                  {"id":"6D2F2A1E-0000-4000-8000-000000000003","name":"SOCKS 隧道","color":"#7c3aed","kind":"socks5","host":"127.0.0.1","port":1080},
                                  {"id":"6D2F2A1E-0000-4000-8000-000000000004","name":"iCloud 来的","color":"#db2777","kind":"http","host":"10.0.0.8","port":8888}],
-                     "engine":{"subscriptions":[{"id":"6D2F2A1E-0000-4000-8000-00000000000A","name":"测试机场","url":"http://127.0.0.1:8766/sub.txt"}],"mode":"rule"}}}
+                     "engine":{"subscriptions":[{"id":"6D2F2A1E-0000-4000-8000-00000000000A","name":"测试机场","url":"file://SUBFILE"}],"mode":"rule"}}}
           JSON
+          # runner 上未签名程序连本机端口会被系统的「本地网络」权限拦住（超时），所以 CI 里用本机文件当订阅。
+          sed -i '' "s|file://SUBFILE|file://$(pwd)/feed0/sub.txt|" "$cloud/config.json"
           echo '{"syncEnabled":true}' > "$support/state.json"
           echo "PROXYSWITCH_SYNC_DIR=$cloud" >> "$GITHUB_ENV"
           # 直接运行 .app 里的二进制，环境变量才能传进去；系统仍把它当作 dist/ProxySwitch.app 在运行，proxyswitch:// 命令照常送达。
@@ -83,6 +86,9 @@ jobs:
           done
           open "proxyswitch://settings?page=nodes"; sleep 3
           screencapture -x screenshots/nodes.png || true
+          # 诊断：经内核的代理端口访问本机和外网（只打印，不判定）。
+          echo "经内核访问本机端口：$(curl -s -m 8 -x http://127.0.0.1:7890 -o /dev/null -w '%{http_code}' http://127.0.0.1:8766/sub.txt || true)"
+          echo "经内核访问外网：$(curl -s -m 10 -x http://127.0.0.1:7890 -o /dev/null -w '%{http_code}' https://cp.cloudflare.com/generate_204 || true)"
           echo "===== 内核配置 ====="; cat "$support/core/config.yaml" | head -60
           echo "===== 内核日志 ====="; cat "$support/core/core.log" || true
           echo "===== 程序日志 ====="; cat "$support/proxyswitch.log" || true

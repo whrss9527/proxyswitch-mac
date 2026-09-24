@@ -459,7 +459,10 @@ final class Engine: ObservableObject {
     static func parseDate(_ text: String?) -> Date? {
         guard let text else { return nil }
         for formatter in dateFormatters {
-            if let date = formatter.date(from: text) { return date }
+            if let date = formatter.date(from: text) {
+                // 内核还没更新过时给的是零时间（0001-01-01）。
+                return date.timeIntervalSince1970 > 0 ? date : nil
+            }
         }
         return nil
     }

@@ -27,13 +27,25 @@ struct Subscription: Codable, Identifiable, Equatable, Hashable {
     /// 内核配置里 provider 的名字，只用 ASCII，省得在 YAML 里折腾引号。
     var providerName: String { "sub-" + id.uuidString.prefix(8).lowercased() }
 
-    /// 校验地址，返回问题；没问题返回 nil。
+    /// 校验地址，返回问题；没问题返回 nil。支持 http(s) 地址和本机的 file:// 文件。
     static func validate(url text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme), url.host != nil else {
+        guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased() else {
+            return "订阅地址要以 http:// 或 https:// 开头"
+        }
+        if scheme == "file" {
+            return url.path.isEmpty ? "文件地址不对" : nil
+        }
+        guard ["http", "https"].contains(scheme), url.host != nil else {
             return "订阅地址要以 http:// 或 https:// 开头"
         }
         return nil
+    }
+
+    /// 本机文件的路径（file:// 订阅）。
+    var filePath: String? {
+        guard let parsed = URL(string: url), parsed.scheme?.lowercased() == "file" else { return nil }
+        return parsed.path
     }
 }
 

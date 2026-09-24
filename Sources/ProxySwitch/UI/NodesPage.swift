@@ -117,9 +117,11 @@ struct NodesPage: View {
             }
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    TextField("名称（可选）", text: $newName)
+                    TextField("", text: $newName, prompt: Text("名称（可选）"))
+                        .labelsHidden()
                         .frame(width: 140)
-                    TextField("订阅地址 https://…", text: $newURL)
+                    TextField("", text: $newURL, prompt: Text("订阅地址 https://…"))
+                        .labelsHidden()
                         .onSubmit { add() }
                     Button("添加") { add() }
                         .disabled(newURL.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -170,7 +172,8 @@ struct NodesPage: View {
                 }
                 if isCustom {
                     HStack {
-                        TextField("小火箭 / Surge / Clash 格式的规则地址", text: $customRuleURL)
+                        TextField("", text: $customRuleURL, prompt: Text("小火箭 / Surge / Clash 格式的规则地址"))
+                            .labelsHidden()
                             .onSubmit { applyCustomRule() }
                         Button("应用") { applyCustomRule() }
                             .disabled(customRuleURL.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -246,7 +249,7 @@ struct NodesPage: View {
     private var portsSection: some View {
         Section("端口") {
             HStack {
-                TextField("代理端口（HTTP 和 SOCKS 共用）", text: $mixedPortText)
+                TextField("代理端口", text: $mixedPortText)
                     .onChange(of: mixedPortText) { _, value in
                         let digits = value.filter(\.isNumber)
                         if digits != value { mixedPortText = digits }

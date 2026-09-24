@@ -40,14 +40,19 @@ enum CoreConfigBuilder {
         if !providers.isEmpty {
             lines.append("proxy-providers:")
             for subscription in providers {
-                let path = input.directory.appendingPathComponent("providers/\(subscription.providerName).yaml").path
                 lines.append("  \(subscription.providerName):")
-                lines.append("    type: http")
-                lines.append("    url: \(quote(subscription.url))")
-                lines.append("    path: \(quote(path))")
-                lines.append("    interval: \(max(1, engine.updateIntervalHours) * 3600)")
-                lines.append("    header:")
-                lines.append("      User-Agent: [\(quote(providerUserAgent))]")
+                if let filePath = subscription.filePath {
+                    lines.append("    type: file")
+                    lines.append("    path: \(quote(filePath))")
+                } else {
+                    let path = input.directory.appendingPathComponent("providers/\(subscription.providerName).yaml").path
+                    lines.append("    type: http")
+                    lines.append("    url: \(quote(subscription.url))")
+                    lines.append("    path: \(quote(path))")
+                    lines.append("    interval: \(max(1, engine.updateIntervalHours) * 3600)")
+                    lines.append("    header:")
+                    lines.append("      User-Agent: [\(quote(providerUserAgent))]")
+                }
                 lines.append("    health-check:")
                 lines.append("      enable: true")
                 lines.append("      url: \(quote(input.testURL))")
