@@ -356,36 +356,42 @@ struct AboutPage: View {
     var body: some View {
         VStack(spacing: 0) {
             PageHeader(title: "关于", subtitle: "ProxySwitch for Mac")
-            VStack(spacing: 16) {
-                Image(nsImage: NSApp.applicationIconImage)
-                    .resizable()
-                    .frame(width: 96, height: 96)
-                    .shadow(color: .black.opacity(0.2), radius: 12, y: 6)
-                Text("ProxySwitch")
-                    .font(.system(size: 20, weight: .bold))
-                Text("版本 \(UpdateChecker.currentVersion)")
-                    .foregroundStyle(.secondary)
-                Text("菜单栏里的代理开关：一键切换系统代理、环境变量、git 和 npm 的代理设置。")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 360)
-                HStack(spacing: 10) {
-                    Button("GitHub") { NSWorkspace.shared.open(AppInfo.repositoryURL) }
-                    Button("反馈问题") { NSWorkspace.shared.open(AppInfo.issuesURL) }
-                }
-                Divider()
-                    .padding(.horizontal, 40)
-                UpdateSection(updater: state.updater)
-                Text("MIT License")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+            ScrollView {
+                aboutCard
+                    .padding(24)
             }
-            .frame(maxWidth: .infinity)
-            .padding(28)
-            .glassCard(cornerRadius: 20)
-            .padding(24)
-            Spacer()
         }
+    }
+
+    private var aboutCard: some View {
+        VStack(spacing: 16) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 96, height: 96)
+                .shadow(color: .black.opacity(0.2), radius: 12, y: 6)
+            Text("ProxySwitch")
+                .font(.system(size: 20, weight: .bold))
+            Text("版本 \(UpdateChecker.currentVersion)")
+                .foregroundStyle(.secondary)
+            Text("菜单栏里的代理开关：一键切换系统代理、环境变量、git 和 npm 的代理设置。")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 360)
+            HStack(spacing: 10) {
+                Button("GitHub") { NSWorkspace.shared.open(AppInfo.repositoryURL) }
+                Button("反馈问题") { NSWorkspace.shared.open(AppInfo.issuesURL) }
+            }
+            Divider()
+                .padding(.horizontal, 40)
+            UpdateSection(updater: state.updater)
+            Text("MIT License")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(28)
+        .glassCard(cornerRadius: 20)
     }
 }

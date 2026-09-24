@@ -148,7 +148,7 @@ jobs:
               sips -Z 1400 -s format jpeg -s formatOptions 70 "$name.png" --out "$name.jpg" >/dev/null
             fi
           done
-          for name in panel settings sync panel-update about about-after; do
+          for name in panel-update sync about about-after panel settings; do
             [ -f "$name.jpg" ] || continue
             echo "=====BEGIN $name.jpg====="
             base64 -b 76 -i "$name.jpg"

@@ -107,8 +107,18 @@ struct SyncPage: View {
                     .foregroundStyle(.secondary)
             }
         case .error(let message):
-            Label(message, systemImage: "xmark.icloud")
-                .foregroundStyle(.red)
+            VStack(alignment: .trailing, spacing: 6) {
+                Label(message, systemImage: "xmark.icloud")
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.trailing)
+                Button("打开隐私设置") {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders")!)
+                }
+                .controlSize(.small)
+                Text("如果是拒绝过访问 iCloud 云盘，在「文件和文件夹」里允许 ProxySwitch 访问 iCloud 云盘。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
