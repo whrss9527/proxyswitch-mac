@@ -52,7 +52,7 @@ if [ -z "${SKIP_CORE:-}" ]; then
   fetch "https://raw.githubusercontent.com/MetaCubeX/mihomo/$CORE_VERSION/LICENSE" "$CORE_CACHE/mihomo-LICENSE.txt"
   cp "$CORE_CACHE/mihomo-LICENSE.txt" "$APP/Contents/Resources/mihomo-LICENSE.txt"
   codesign --force --sign "${CODESIGN_IDENTITY:--}" "$APP/Contents/MacOS/mihomo"
-  echo "内核 mihomo $CORE_VERSION：$(lipo -archs "$APP/Contents/MacOS/mihomo")"
+  echo "内核 mihomo ${CORE_VERSION}：$(lipo -archs "${APP}/Contents/MacOS/mihomo")"
 fi
 
 # 没有开发者证书时用 ad-hoc 签名，Apple 芯片上必须有签名才能运行。
