@@ -190,6 +190,12 @@ struct GeneralPage: View {
                         }
                     }
                 }
+                Section("更新") {
+                    Toggle("自动检查更新", isOn: $state.config.autoCheckUpdates)
+                    Text("启动后和之后每 6 小时检查一次 GitHub 上的新版本，有新版本时通知，不会自动安装。「关于」页里可以随时手动检查和一键更新。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
@@ -226,7 +232,7 @@ struct HotkeyPage: View {
                     Text("终端里可以用 open 命令控制：")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    ForEach(["open proxyswitch://toggle", "open proxyswitch://on", "open proxyswitch://off", "open \"proxyswitch://use?name=配置名\""], id: \.self) { command in
+                    ForEach(["open proxyswitch://toggle", "open proxyswitch://on", "open proxyswitch://off", "open \"proxyswitch://use?name=配置名\"", "open proxyswitch://update"], id: \.self) { command in
                         HStack {
                             Text(command)
                                 .font(.system(size: 12, design: .monospaced))
@@ -342,8 +348,6 @@ struct DiagnosticsPage: View {
 
 struct AboutPage: View {
     @ObservedObject var state: AppState
-    @State private var checking = false
-    @State private var checked = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -365,28 +369,10 @@ struct AboutPage: View {
                 HStack(spacing: 10) {
                     Button("GitHub") { NSWorkspace.shared.open(AppInfo.repositoryURL) }
                     Button("反馈问题") { NSWorkspace.shared.open(AppInfo.issuesURL) }
-                    Button(checking ? "正在检查…" : "检查更新") {
-                        checking = true
-                        Task { @MainActor in
-                            await state.checkForUpdates()
-                            checking = false
-                            checked = true
-                        }
-                    }
-                    .disabled(checking)
                 }
-                if let release = state.latestRelease {
-                    Button {
-                        NSWorkspace.shared.open(release.url)
-                    } label: {
-                        Label("有新版本 \(release.version)，去下载", systemImage: "arrow.down.circle.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-                } else if checked {
-                    Text("已经是最新版本")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Divider()
+                    .padding(.horizontal, 40)
+                UpdateSection(updater: state.updater)
                 Text("MIT License")
                     .font(.caption)
                     .foregroundStyle(.tertiary)

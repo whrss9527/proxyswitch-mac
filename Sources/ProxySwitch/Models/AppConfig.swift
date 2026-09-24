@@ -67,11 +67,12 @@ struct AppConfig: Codable, Equatable {
     var healthCheck: Bool = true
     var disableOnExit: Bool = false
     var testURL: String = AppConfig.defaultTestURL
+    var autoCheckUpdates: Bool = true
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case profiles, clickAction, toggleHotkey, offMode, notifyLevel, healthCheck, disableOnExit, testURL
+        case profiles, clickAction, toggleHotkey, offMode, notifyLevel, healthCheck, disableOnExit, testURL, autoCheckUpdates
     }
 
     init(from decoder: Decoder) throws {
@@ -88,6 +89,7 @@ struct AppConfig: Codable, Equatable {
         healthCheck = try container.decodeIfPresent(Bool.self, forKey: .healthCheck) ?? true
         disableOnExit = try container.decodeIfPresent(Bool.self, forKey: .disableOnExit) ?? false
         testURL = try container.decodeIfPresent(String.self, forKey: .testURL) ?? AppConfig.defaultTestURL
+        autoCheckUpdates = try container.decodeIfPresent(Bool.self, forKey: .autoCheckUpdates) ?? true
     }
 
     func encode(to encoder: Encoder) throws {
@@ -101,6 +103,7 @@ struct AppConfig: Codable, Equatable {
         try container.encode(healthCheck, forKey: .healthCheck)
         try container.encode(disableOnExit, forKey: .disableOnExit)
         try container.encode(testURL, forKey: .testURL)
+        try container.encode(autoCheckUpdates, forKey: .autoCheckUpdates)
     }
 
     func profile(id: UUID?) -> Profile? {

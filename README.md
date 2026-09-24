@@ -17,13 +17,15 @@ Windows 版在 [proxyswitch](https://github.com/whrss9527/proxyswitch)，两边�
 - **自动检测**：找出本机正在运行的代理软件监听的端口，确认能用后一键添加。
 - **全局快捷键**：默认 ⌃⌥P 开关代理，可以在设置里录制新的。
 - **登录时启动**：系统设置的「登录项」里可以看到和关闭。
-- **命令**：`open proxyswitch://toggle`、`proxyswitch://on`、`proxyswitch://off`、`proxyswitch://use?name=配置名`、`proxyswitch://settings`，可以接快捷指令和脚本。
+- **命令**：`open proxyswitch://toggle`、`proxyswitch://on`、`proxyswitch://off`、`proxyswitch://use?name=配置名`、`proxyswitch://settings`、`proxyswitch://update`，可以接快捷指令和脚本。
+- **检查更新与一键更新**：启动后和每 6 小时检查一次 GitHub 上的新版本（可以关掉），有新版本时通知、面板里出现更新条。点「更新」会下载 zip、比对 SHA-256、就地替换 `ProxySwitch.app` 并自动重新启动；装在「应用程序」里的标准账户会弹一次系统授权对话框。
 
 ## 安装
 
 1. 在 [Releases](../../releases) 下载 `ProxySwitch-macos.zip`，解压后把 `ProxySwitch.app` 拖到「应用程序」。
 2. 程序没有 Apple 开发者签名，第一次打开会被系统拦下：在 `ProxySwitch.app` 上右键 → 打开 → 再点「打开」；或者在终端运行 `xattr -dr com.apple.quarantine /Applications/ProxySwitch.app`。
 3. 需要 macOS 14 或更新版本。
+4. 之后的版本在程序里更新：有新版本时面板里会出现更新条，点「更新」就行；也可以在「关于」页手动检查。请把程序放在「应用程序」里再更新，直接在下载文件夹里打开的程序被系统放在只读的临时位置，没法就地替换。
 
 ## 权限说明
 
@@ -57,7 +59,9 @@ VERSION=0.1.0 Scripts/build-app.sh   # 组装通用二进制的 dist/ProxySwitch
 | `Scripts/build-app.sh` | 组装 .app、签名、打 zip |
 | `Resources` | Info.plist、图标 |
 
-推送代码时 GitHub Actions 会在 macOS 上编译、测试、打包并启动一次截图；推送 `v*` 标签会自动打包并发布 Release。
+推送代码时 GitHub Actions 会在 macOS 上编译、测试、打包并启动一次截图，然后用本地 HTTP 服务器假装发布一个 9.9.9 版本，走一遍下载、校验、替换、重新启动的完整更新流程；推送 `v*` 标签会自动打包并发布 Release。
+
+本机调试更新流程时可以把环境变量 `PROXYSWITCH_UPDATE_URL` 指向一个返回 GitHub releases 格式 JSON 的地址（见 `.github/workflows/ci.yml` 里的做法）。
 
 ## 许可证
 

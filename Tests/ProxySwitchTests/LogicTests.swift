@@ -131,8 +131,11 @@ final class ParsingTests: XCTestCase {
         XCTAssertEqual(URLCommand.parse(URL(string: "proxyswitch://toggle")!), .toggle)
         XCTAssertEqual(URLCommand.parse(URL(string: "proxyswitch://on")!), .turnOn)
         XCTAssertEqual(URLCommand.parse(URL(string: "proxyswitch://off")!), .turnOff)
-        XCTAssertEqual(URLCommand.parse(URL(string: "proxyswitch://settings")!), .settings)
+        XCTAssertEqual(URLCommand.parse(URL(string: "proxyswitch://settings")!), .settings(nil))
+        XCTAssertEqual(URLCommand.parse(URL(string: "proxyswitch://settings?page=about")!), .settings(.about))
+        XCTAssertEqual(URLCommand.parse(URL(string: "proxyswitch://settings?page=nope")!), .settings(nil))
         XCTAssertEqual(URLCommand.parse(URL(string: "proxyswitch://panel")!), .panel)
+        XCTAssertEqual(URLCommand.parse(URL(string: "proxyswitch://update")!), .update)
         XCTAssertEqual(URLCommand.parse(URL(string: "proxyswitch://use?name=%E5%85%AC%E5%8F%B8")!), .use("公司"))
         XCTAssertEqual(URLCommand.parse(URL(string: "proxyswitch://use/home")!), .use("home"))
         XCTAssertNil(URLCommand.parse(URL(string: "proxyswitch://nope")!))
@@ -155,6 +158,69 @@ final class ParsingTests: XCTestCase {
         XCTAssertTrue(UpdateChecker.isNewer("1.2", than: "1.1.9"))
         XCTAssertFalse(UpdateChecker.isNewer("1.1.9", than: "1.1.9"))
         XCTAssertFalse(UpdateChecker.isNewer("0.9", than: "1.0"))
+        XCTAssertTrue(UpdateChecker.isNewer("v0.2.0", than: "0.1.9"))
+        // 预发布版本比同号的正式版本旧，但比更早的正式版本新。
+        XCTAssertTrue(UpdateChecker.isNewer("0.2.0-beta.1", than: "0.1.1"))
+        XCTAssertFalse(UpdateChecker.isNewer("0.2.0-beta.1", than: "0.2.0"))
+        XCTAssertTrue(UpdateChecker.isNewer("0.2.0", than: "0.2.0-beta.1"))
+    }
+
+    func testReleaseParse() throws {
+        let json = """
+        {"tag_name":"v0.2.0","html_url":"https://github.com/whrss9527/proxyswitch-mac/releases/tag/v0.2.0",
+         "body":"- 一键更新\\n- 修复","published_at":"2026-09-24T08:56:44Z","draft":false,"prerelease":false,
+         "assets":[{"name":"ProxySwitch-macos.zip","size":1186132,"browser_download_url":"https://github.com/whrss9527/proxyswitch-mac/releases/download/v0.2.0/ProxySwitch-macos.zip"},
+                   {"name":"SHA256SUMS.txt","size":89,"browser_download_url":"https://github.com/whrss9527/proxyswitch-mac/releases/download/v0.2.0/SHA256SUMS.txt"}]}
+        """
+        let release = try XCTUnwrap(UpdateChecker.parse(Data(json.utf8)))
+        XCTAssertEqual(release.version, "0.2.0")
+        XCTAssertEqual(release.tag, "v0.2.0")
+        XCTAssertEqual(release.pageURL.absoluteString, "https://github.com/whrss9527/proxyswitch-mac/releases/tag/v0.2.0")
+        XCTAssertEqual(release.notes, "- 一键更新\n- 修复")
+        XCTAssertNotNil(release.publishedAt)
+        XCTAssertEqual(release.archiveSize, 1186132)
+        XCTAssertEqual(release.archiveURL?.lastPathComponent, "ProxySwitch-macos.zip")
+        XCTAssertEqual(release.checksumsURL?.lastPathComponent, "SHA256SUMS.txt")
+        XCTAssertTrue(release.canInstall)
+
+        let bare = try XCTUnwrap(UpdateChecker.parse(Data(#"{"tag_name":"0.3.0","assets":[]}"#.utf8)))
+        XCTAssertEqual(bare.version, "0.3.0")
+        XCTAssertFalse(bare.canInstall)
+        XCTAssertEqual(bare.pageURL, UpdateChecker.releasesURL)
+        XCTAssertNil(UpdateChecker.parse(Data("{}".utf8)))
+        XCTAssertNil(UpdateChecker.parse(Data("not json".utf8)))
+    }
+
+    func testChecksums() throws {
+        let text = """
+        说明行
+        0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0  ProxySwitch-macos.zip
+        DEADBEEF  太短的
+        5891B5B522D5DF086D0FF0B110FBD9D21BB4FC7163AF34D08286A2E846F6BE03 *hello.txt
+        """
+        XCTAssertEqual(Checksums.parse(text), [
+            "ProxySwitch-macos.zip": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+            "hello.txt": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
+        ])
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("checksum-\(UUID().uuidString).bin")
+        try Data("hello\n".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        XCTAssertEqual(try Checksums.sha256(of: file), "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03")
+    }
+
+    func testInstallability() {
+        let installed = URL(fileURLWithPath: "/Applications/ProxySwitch.app")
+        XCTAssertEqual(Installability.check(bundleURL: installed), .ok(installed))
+        XCTAssertNil(Installability.check(bundleURL: installed).problem)
+        let translocated = URL(fileURLWithPath: "/private/var/folders/ab/T/AppTranslocation/1234-5678/d/ProxySwitch.app")
+        XCTAssertEqual(Installability.check(bundleURL: translocated), .translocated)
+        XCTAssertNotNil(Installability.check(bundleURL: translocated).problem)
+        XCTAssertEqual(Installability.check(bundleURL: URL(fileURLWithPath: "/Users/me/.build/debug")), .notBundle)
+    }
+
+    func testReleaseNotesCleaning() {
+        let notes = "## 0.2.0\r\n\r\n- 一键更新\r\n  * 子项\r\n普通一行"
+        XCTAssertEqual(ReleaseNotes.cleaned(notes), "0.2.0\n\n• 一键更新\n• 子项\n普通一行")
     }
 
     func testProxyAddressParse() {
@@ -197,6 +263,7 @@ final class ParsingTests: XCTestCase {
         let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
         XCTAssertEqual(decoded, config)
         XCTAssertNil(decoded.toggleHotkey)
+        XCTAssertTrue(decoded.autoCheckUpdates)
         // 缺少 toggleHotkey 键时用默认快捷键。
         let minimal = try JSONDecoder().decode(AppConfig.self, from: Data("{}".utf8))
         XCTAssertEqual(minimal.toggleHotkey, HotkeyBinding.defaultToggle)

@@ -17,7 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainMenu.install()
         let state = AppState.shared
-        Notifier.shared.onOpen = { SettingsWindowController.shared.show(page: .profiles) }
+        Notifier.shared.onOpen = { route in
+            SettingsWindowController.shared.show(page: route == "about" ? SettingsPage.about : SettingsPage.profiles)
+        }
         let controller = StatusItemController(state: state)
         statusController = controller
         state.onStatusChanged = { [weak controller] in controller?.updateIcon() }

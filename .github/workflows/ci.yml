@@ -52,6 +52,57 @@ jobs:
         with:
           name: ProxySwitch-macos
           path: dist/ProxySwitch-macos.zip
+      - name: 端到端更新测试（本地假发布）
+        run: |
+          support="$HOME/Library/Application Support/ProxySwitch"
+          # 用打包好的程序造一个 9.9.9 版本，放到本地 HTTP 服务器上当作 GitHub 的最新发布。
+          rm -rf feed && mkdir -p feed
+          cp -R dist/ProxySwitch.app feed/ProxySwitch.app
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 9.9.9" feed/ProxySwitch.app/Contents/Info.plist
+          codesign --force --deep --sign - feed/ProxySwitch.app
+          (cd feed && ditto -c -k --keepParent ProxySwitch.app ProxySwitch-macos.zip && rm -rf ProxySwitch.app && shasum -a 256 ProxySwitch-macos.zip > SHA256SUMS.txt)
+          size=$(stat -f %z feed/ProxySwitch-macos.zip)
+          cat > feed/latest.json <<JSON
+          {"tag_name":"v9.9.9","html_url":"http://127.0.0.1:8765/latest.json","published_at":"2026-01-01T00:00:00Z",
+           "body":"## 9.9.9\n\n- 这是 CI 里用来测试一键更新的假版本。\n- 下载、校验、替换、重新启动都会走一遍。",
+           "assets":[{"name":"ProxySwitch-macos.zip","size":$size,"browser_download_url":"http://127.0.0.1:8765/ProxySwitch-macos.zip"},
+                     {"name":"SHA256SUMS.txt","size":100,"browser_download_url":"http://127.0.0.1:8765/SHA256SUMS.txt"}]}
+          JSON
+          (cd feed && python3 -m http.server 8765 --bind 127.0.0.1 >/dev/null 2>&1 &)
+          sleep 1
+          curl -sf http://127.0.0.1:8765/latest.json >/dev/null
+          : > "$support/proxyswitch.log"
+          # 直接运行 .app 里的二进制，环境变量才能传进去；系统仍把它当作 dist/ProxySwitch.app 在运行，proxyswitch:// 命令照常送达。
+          PROXYSWITCH_UPDATE_URL=http://127.0.0.1:8765/latest.json dist/ProxySwitch.app/Contents/MacOS/ProxySwitch >/dev/null 2>&1 &
+          # 启动 5 秒后自动检查，等它发现新版本。
+          for i in $(seq 1 20); do
+            grep -q "有新版本 9.9.9" "$support/proxyswitch.log" && break
+            sleep 1
+          done
+          open "proxyswitch://settings?page=about"; sleep 4
+          screencapture -x screenshots/about.png || true
+          open "proxyswitch://panel"; sleep 3
+          screencapture -x screenshots/panel-update.png || true
+          open "proxyswitch://update"
+          # 等下载、替换和重新启动完成。
+          version=""
+          for i in $(seq 1 60); do
+            version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" dist/ProxySwitch.app/Contents/Info.plist 2>/dev/null || true)
+            if [ "$version" = "9.9.9" ] && grep -q "已启动，版本 9.9.9" "$support/proxyswitch.log"; then break; fi
+            sleep 1
+          done
+          sleep 3
+          open "proxyswitch://settings?page=about"; sleep 4
+          screencapture -x screenshots/about-after.png || true
+          echo "===== 日志 ====="
+          cat "$support/proxyswitch.log" || true
+          echo "================"
+          [ "$version" = "9.9.9" ] || { echo "程序没有被替换成 9.9.9（现在是 $version）"; exit 1; }
+          grep -q "已启动，版本 9.9.9" "$support/proxyswitch.log" || { echo "新版本没有重新启动"; exit 1; }
+          pgrep -x ProxySwitch >/dev/null || { echo "更新后程序没有在运行"; exit 1; }
+          codesign --verify --deep --strict dist/ProxySwitch.app
+          ls -la dist
+          pkill -x ProxySwitch || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -69,10 +120,19 @@ jobs:
             fi
             sips -s format jpeg -s formatOptions 75 panel-crop.png --out panel.jpg >/dev/null
           fi
-          if [ -f settings.png ]; then
-            sips -Z 1400 -s format jpeg -s formatOptions 70 settings.png --out settings.jpg >/dev/null
+          if [ -f panel-update.png ]; then
+            width=$(sips -g pixelWidth panel-update.png | awk '/pixelWidth/{print $2}')
+            if ! sips -c 760 640 --cropOffset 0 $((width - 640)) panel-update.png --out panel-update-crop.png >/dev/null 2>&1; then
+              cp panel-update.png panel-update-crop.png
+            fi
+            sips -s format jpeg -s formatOptions 75 panel-update-crop.png --out panel-update.jpg >/dev/null
           fi
-          for name in panel settings; do
+          for name in settings about about-after; do
+            if [ -f "$name.png" ]; then
+              sips -Z 1400 -s format jpeg -s formatOptions 70 "$name.png" --out "$name.jpg" >/dev/null
+            fi
+          done
+          for name in panel settings panel-update about about-after; do
             [ -f "$name.jpg" ] || continue
             echo "=====BEGIN $name.jpg====="
             base64 -b 76 -i "$name.jpg"

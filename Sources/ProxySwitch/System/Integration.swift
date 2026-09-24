@@ -23,7 +23,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     private var available: Bool { Bundle.main.bundleIdentifier != nil }
     private var authorizationRequested = false
-    var onOpen: (@MainActor () -> Void)?
+    /// 用户点了通知；参数是发通知时给的 route（比如 "about"），用来决定打开哪一页。
+    var onOpen: (@MainActor (String?) -> Void)?
 
     func prepare() {
         guard available, !authorizationRequested else { return }
@@ -39,7 +40,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    func show(title: String, body: String) {
+    func show(title: String, body: String, route: String? = nil) {
         guard available else {
             Log.info("通知（没有 bundle，不显示）：\(title) \(body)")
             return
@@ -48,6 +49,9 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
+        if let route {
+            content.userInfo = ["route": route]
+        }
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request) { error in
             if let error {
@@ -62,33 +66,40 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
-            Task { @MainActor in self.onOpen?() }
+            let route = response.notification.request.content.userInfo["route"] as? String
+            Task { @MainActor in self.onOpen?(route) }
         }
         completionHandler()
     }
 }
 
-/// proxyswitch:// 命令：on、off、toggle、use?name=配置名、settings、panel。可以在终端里 open "proxyswitch://toggle"，也能接快捷指令。
+/// proxyswitch:// 命令：on、off、toggle、use?name=配置名、settings（可带 ?page=about 等）、panel、update。
+/// 可以在终端里 open "proxyswitch://toggle"，也能接快捷指令。
 enum URLCommand: Equatable {
     case turnOn
     case turnOff
     case toggle
     case use(String)
-    case settings
+    case settings(SettingsPage?)
     case panel
+    /// 检查更新，有新版本就直接下载安装。
+    case update
 
     static func parse(_ url: URL) -> URLCommand? {
         guard url.scheme?.lowercased() == "proxyswitch" else { return nil }
         let command = (url.host ?? url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))).lowercased()
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         switch command {
         case "on", "enable", "start": return .turnOn
         case "off", "disable", "stop": return .turnOff
         case "toggle": return .toggle
-        case "settings", "preferences": return .settings
+        case "settings", "preferences":
+            let page = query.first { $0.name == "page" }?.value.flatMap { SettingsPage(rawValue: $0.lowercased()) }
+            return .settings(page)
         case "panel", "menu": return .panel
+        case "update", "upgrade": return .update
         case "use", "switch":
-            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-            var name = components?.queryItems?.first { $0.name == "name" }?.value ?? ""
+            var name = query.first { $0.name == "name" }?.value ?? ""
             if name.isEmpty {
                 name = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).removingPercentEncoding ?? ""
             }
@@ -132,47 +143,4 @@ enum AppInfo {
     static let repository = "whrss9527/proxyswitch-mac"
     static var repositoryURL: URL { URL(string: "https://github.com/\(repository)")! }
     static var issuesURL: URL { URL(string: "https://github.com/\(repository)/issues")! }
-}
-
-/// 检查 GitHub 上的新版本（只提示，不自动安装）。
-enum UpdateChecker {
-    static var releasesURL: URL { URL(string: "https://github.com/\(AppInfo.repository)/releases")! }
-    static var apiURL: URL { URL(string: "https://api.github.com/repos/\(AppInfo.repository)/releases/latest")! }
-
-    static var currentVersion: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.0.0"
-    }
-
-    struct Release: Equatable {
-        var version: String
-        var url: URL
-        var hasMacAsset: Bool
-    }
-
-    static func latest() async -> Release? {
-        var request = URLRequest(url: apiURL)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 15
-        guard let response = try? await URLSession.shared.data(for: request),
-              let json = try? JSONSerialization.jsonObject(with: response.0) as? [String: Any],
-              let tag = json["tag_name"] as? String else {
-            return nil
-        }
-        let assets = (json["assets"] as? [[String: Any]]) ?? []
-        let hasMac = assets.contains { ($0["name"] as? String)?.contains("macos") == true }
-        let url = (json["html_url"] as? String).flatMap(URL.init(string:)) ?? releasesURL
-        return Release(version: tag.hasPrefix("v") ? String(tag.dropFirst()) : tag, url: url, hasMacAsset: hasMac)
-    }
-
-    /// 比较版本号：first 比 second 新返回 true。
-    static func isNewer(_ first: String, than second: String) -> Bool {
-        let a = first.split(separator: ".").map { Int($0) ?? 0 }
-        let b = second.split(separator: ".").map { Int($0) ?? 0 }
-        for index in 0..<max(a.count, b.count) {
-            let x = index < a.count ? a[index] : 0
-            let y = index < b.count ? b[index] : 0
-            if x != y { return x > y }
-        }
-        return false
-    }
 }

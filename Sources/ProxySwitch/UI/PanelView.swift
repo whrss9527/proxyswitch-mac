@@ -20,6 +20,7 @@ struct PanelView: View {
             if case .external = state.status {
                 externalCard
             }
+            UpdateBanner(updater: state.updater) { actions.openSettings(.about) }
             if !state.config.profiles.isEmpty {
                 profileList
             } else {
@@ -209,16 +210,7 @@ struct PanelView: View {
 
             Spacer()
 
-            if let release = state.latestRelease {
-                Button {
-                    NSWorkspace.shared.open(release.url)
-                } label: {
-                    Label("新版本 \(release.version)", systemImage: "arrow.down.circle")
-                        .font(.system(size: 11))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.accentColor)
-            } else if let hotkey = state.config.toggleHotkey {
+            if let hotkey = state.config.toggleHotkey {
                 Text("\(hotkey.display) 开关")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)

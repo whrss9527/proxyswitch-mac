@@ -40,7 +40,9 @@ final class AppState: ObservableObject {
     @Published var lastError: String?
     @Published var testResults: [UUID: TestResult] = [:]
     @Published var loginItemEnabled = false
-    @Published var latestRelease: UpdateChecker.Release?
+    let updater = Updater()
+    /// 更新后正在重新启动：退出时不要按「退出时关闭代理」清理。
+    var relaunching = false
 
     private var watcher: SystemWatcher?
     private var refreshTimer: Timer?
@@ -81,7 +83,14 @@ final class AppState: ObservableObject {
             .store(in: &cancellables)
         refresh()
         Task { await checkHealth() }
-        Task { await checkForUpdates() }
+        updater.notify = { [weak self] title, body in
+            self?.notify(title: title, body: body, problem: false, route: "about")
+        }
+        updater.onRelaunch = { [weak self] in
+            self?.relaunching = true
+            NSApp.terminate(nil)
+        }
+        updater.startAutomaticChecks { [weak self] in self?.config.autoCheckUpdates ?? true }
     }
 
     // MARK: - 状态
@@ -374,28 +383,20 @@ final class AppState: ObservableObject {
         onStatusChanged?()
     }
 
-    func checkForUpdates() async {
-        guard let release = await UpdateChecker.latest(), release.hasMacAsset,
-              UpdateChecker.isNewer(release.version, than: UpdateChecker.currentVersion) else {
-            return
-        }
-        latestRelease = release
-    }
-
     // MARK: - 通知与退出
 
-    func notify(title: String, body: String, problem: Bool) {
+    func notify(title: String, body: String, problem: Bool, route: String? = nil) {
         switch config.notifyLevel {
         case .none: return
         case .problems where !problem: return
         default: break
         }
-        Notifier.shared.show(title: title, body: body)
+        Notifier.shared.show(title: title, body: body, route: route)
     }
 
     /// 退出时按设置关闭代理。
     func handleExit() {
-        guard config.disableOnExit, case .on(let profile) = status else { return }
+        guard !relaunching, config.disableOnExit, case .on(let profile) = status else { return }
         let desired = DesiredProxy(offWithAutoDiscovery: persisted.original?.autoDiscovery ?? snapshot.autoDiscovery, bypassDomains: snapshot.exceptions)
         let semaphore = DispatchSemaphore(value: 0)
         Task.detached {

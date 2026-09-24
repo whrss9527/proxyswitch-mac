@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// 菜单栏图标：左键打开面板（或按设置直接开关），右键弹出简洁菜单。面板是一个无边框的毛玻璃浮动窗口。
@@ -9,6 +10,7 @@ final class StatusItemController: NSObject {
     private var panel: PanelWindow?
     private var hostingView: NSHostingView<PanelView>?
     private var keyObserver: Any?
+    private var cancellables = Set<AnyCancellable>()
 
     init(state: AppState) {
         self.state = state
@@ -20,6 +22,11 @@ final class StatusItemController: NSObject {
             _ = button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             button.imagePosition = .imageOnly
         }
+        // 更新条出现、进度变化时面板高度会变，跟着调整窗口。
+        state.updater.$phase
+            .debounce(for: .milliseconds(50), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in Task { @MainActor in self?.resizePanelIfVisible() } }
+            .store(in: &cancellables)
     }
 
     // MARK: - 图标
@@ -87,10 +94,13 @@ final class StatusItemController: NSObject {
             if !state.use(named: name) {
                 state.notify(title: "没有找到配置", body: "没有叫「\(name)」的配置", problem: true)
             }
-        case .settings:
-            SettingsWindowController.shared.show(page: nil)
+        case .settings(let page):
+            SettingsWindowController.shared.show(page: page)
         case .panel:
             openPanel()
+        case .update:
+            SettingsWindowController.shared.show(page: .about)
+            Task { await state.updater.checkAndInstall() }
         }
     }
 
@@ -126,6 +136,14 @@ final class StatusItemController: NSObject {
             }
         }
         menu.addItem(.separator())
+        let updater = state.updater
+        if let release = updater.release, updater.isInstalling {
+            menu.addItem(header("正在更新到 \(release.version)…"))
+        } else if let release = updater.release {
+            menu.addItem(item("更新到 \(release.version)…", action: #selector(menuInstallUpdate), key: ""))
+        } else {
+            menu.addItem(item("检查更新…", action: #selector(menuCheckUpdates), key: ""))
+        }
         menu.addItem(item("设置…", action: #selector(menuSettings), key: ","))
         menu.addItem(item("退出 ProxySwitch", action: #selector(menuQuit), key: "q"))
         statusItem.menu = menu
@@ -153,6 +171,16 @@ final class StatusItemController: NSObject {
     @objc private func menuSaveExternal() { state.saveExternalAsProfile() }
     @objc private func menuSettings() { SettingsWindowController.shared.show(page: nil) }
     @objc private func menuQuit() { NSApp.terminate(nil) }
+
+    @objc private func menuCheckUpdates() {
+        SettingsWindowController.shared.show(page: .about)
+        Task { await state.updater.check(manual: true) }
+    }
+
+    @objc private func menuInstallUpdate() {
+        SettingsWindowController.shared.show(page: .about)
+        state.updater.install()
+    }
 
     @objc private func menuUseProfile(_ sender: NSMenuItem) {
         guard let text = sender.representedObject as? String, let id = UUID(uuidString: text),
@@ -206,6 +234,12 @@ final class StatusItemController: NSObject {
         guard let panel, panel.isVisible else { return }
         panel.orderOut(nil)
         statusItem.button?.highlight(false)
+    }
+
+    private func resizePanelIfVisible() {
+        if let panel, panel.isVisible {
+            resizePanel()
+        }
     }
 
     private func resizePanel() {

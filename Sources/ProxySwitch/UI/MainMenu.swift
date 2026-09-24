@@ -9,6 +9,7 @@ enum MainMenu {
 
         let appMenu = NSMenu(title: "ProxySwitch")
         appMenu.addItem(withTitle: "关于 ProxySwitch", action: #selector(MenuActions.showAbout(_:)), keyEquivalent: "").target = MenuActions.shared
+        appMenu.addItem(withTitle: "检查更新…", action: #selector(MenuActions.checkForUpdates(_:)), keyEquivalent: "").target = MenuActions.shared
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "设置…", action: #selector(MenuActions.showSettings(_:)), keyEquivalent: ",").target = MenuActions.shared
         appMenu.addItem(.separator())
@@ -55,5 +56,10 @@ final class MenuActions: NSObject {
 
     @objc func showAbout(_ sender: Any?) {
         SettingsWindowController.shared.show(page: .about)
+    }
+
+    @objc func checkForUpdates(_ sender: Any?) {
+        SettingsWindowController.shared.show(page: .about)
+        Task { await AppState.shared.updater.check(manual: true) }
     }
 }
