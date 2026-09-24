@@ -3,6 +3,7 @@ import AppKit
 /// 主菜单。程序只在菜单栏运行，平时看不到主菜单，但 ⌘C / ⌘V / ⌘A / ⌘Z 这些快捷键要经它分发到文本框；
 /// 设置窗口打开期间程序临时切成普通应用，这时菜单栏里也会显示它。
 enum MainMenu {
+    @MainActor
     static func install() {
         let mainMenu = NSMenu()
 
@@ -44,6 +45,7 @@ enum MainMenu {
 }
 
 /// 主菜单里需要目标对象的动作。
+@MainActor
 final class MenuActions: NSObject {
     static let shared = MenuActions()
 
