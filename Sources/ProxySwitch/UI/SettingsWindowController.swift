@@ -3,6 +3,7 @@ import SwiftUI
 
 enum SettingsPage: String, CaseIterable, Identifiable {
     case profiles
+    case nodes
     case general
     case hotkey
     case sync
@@ -14,6 +15,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .profiles: return "代理配置"
+        case .nodes: return "节点与订阅"
         case .general: return "通用"
         case .hotkey: return "快捷键"
         case .sync: return "iCloud 同步"
@@ -25,6 +27,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .profiles: return "point.3.connected.trianglepath.dotted"
+        case .nodes: return "antenna.radiowaves.left.and.right"
         case .general: return "gearshape"
         case .hotkey: return "keyboard"
         case .sync: return "icloud"
@@ -125,6 +128,7 @@ struct SettingsRootView: View {
     private var detail: some View {
         switch navigation.page {
         case .profiles: ProfilesPage(state: state, navigation: navigation)
+        case .nodes: NodesPage(state: state, engine: state.engine)
         case .general: GeneralPage(state: state)
         case .hotkey: HotkeyPage(state: state)
         case .sync: SyncPage(state: state, sync: state.sync)

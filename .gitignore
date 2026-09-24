@@ -5,3 +5,4 @@ screenshots/
 *.xcodeproj
 .DS_Store
 __pycache__/
+.core-cache/

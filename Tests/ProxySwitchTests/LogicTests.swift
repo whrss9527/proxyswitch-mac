@@ -256,6 +256,109 @@ final class ParsingTests: XCTestCase {
         XCTAssertEqual(CloudFile.driveURL(home: home)?.lastPathComponent, "com~apple~CloudDocs")
     }
 
+    func testRuleConversion() {
+        let conf = """
+        [General]
+        skip-proxy = 192.168.0.0/16
+        [Rule]
+        # 注释
+        DOMAIN-SUFFIX,google.com,Proxy
+        DOMAIN-SUFFIX,google.com,Proxy
+        DOMAIN,ad.example.com,Reject
+        DOMAIN-KEYWORD,baidu,direct
+        IP-CIDR,91.108.56.0/22,PROXY,no-resolve
+        IP-CIDR6,2001:b28:f23d::/48,Proxy
+        GEOIP,cn,DIRECT
+        USER-AGENT,MicroMessenger*,Proxy
+        RULE-SET,https://example.com/apple.list,PROXY
+        RULE-SET,local-name,DIRECT
+        FINAL,direct
+        [URL Rewrite]
+        ^https?://(www.)?g.cn https://www.google.com 302
+        """
+        let converted = RuleConverter.convert(conf)
+        XCTAssertEqual(converted.rules, [
+            "DOMAIN-SUFFIX,google.com,节点",
+            "DOMAIN,ad.example.com,REJECT",
+            "DOMAIN-KEYWORD,baidu,DIRECT",
+            "IP-CIDR,91.108.56.0/22,节点,no-resolve",
+            "IP-CIDR6,2001:b28:f23d::/48,节点",
+            "GEOIP,CN,DIRECT",
+            "MATCH,DIRECT",
+        ])
+        XCTAssertEqual(converted.ruleSets, [RuleSetReference(url: "https://example.com/apple.list", policy: "节点")])
+        XCTAssertEqual(converted.skipped, 2)
+
+        // Surge 的 .list 规则集：没有策略字段，用默认策略；内联到 FINAL 之前。
+        let list = RuleConverter.convert("DOMAIN-SUFFIX,apple.news\nIP-CIDR,17.0.0.0/8,no-resolve\n", defaultPolicy: "节点")
+        XCTAssertEqual(list.rules, ["DOMAIN-SUFFIX,apple.news,节点", "IP-CIDR,17.0.0.0/8,节点,no-resolve"])
+        let merged = RuleConverter.merge(converted, ruleSetRules: ["https://example.com/apple.list": list.rules])
+        XCTAssertEqual(merged.last, "MATCH,DIRECT")
+        XCTAssertEqual(merged.count, converted.rules.count + list.rules.count)
+        XCTAssertTrue(merged.contains("DOMAIN-SUFFIX,apple.news,节点"))
+
+        // Clash 的规则文件和 payload 列表。
+        let clash = "port: 7890\nrules:\n  - DOMAIN-SUFFIX,x.com,Proxy\n  - 'GEOIP,CN,DIRECT'\n  - MATCH,Proxy\nproxies: []\n"
+        XCTAssertEqual(RuleConverter.convert(clash).rules, ["DOMAIN-SUFFIX,x.com,节点", "GEOIP,CN,DIRECT", "MATCH,节点"])
+        let payload = "payload:\n  - '+.example.com'\n  - 'sub.example.org'\n  - '10.0.0.0/8'\n"
+        XCTAssertEqual(RuleConverter.convert(payload, defaultPolicy: "DIRECT").rules, ["DOMAIN-SUFFIX,example.com,DIRECT", "DOMAIN,sub.example.org,DIRECT", "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve"])
+        XCTAssertEqual(RuleConverter.policy("Reject"), "REJECT")
+        XCTAssertEqual(RuleConverter.policy("自定义组"), "节点")
+    }
+
+    func testCoreConfig() throws {
+        var engine = EngineConfig()
+        engine.subscriptions = [Subscription(name: "机场", url: "https://air.example.com/sub?token=\"x\"")]
+        engine.mixedPort = 7891
+        engine.apiPort = 9098
+        let input = CoreConfigBuilder.Input(engine: engine, secret: "s3cret", directory: URL(fileURLWithPath: "/tmp/core"), testURL: "https://cp.cloudflare.com/generate_204", rules: RuleConverter.chinaDirectRules)
+        let yaml = CoreConfigBuilder.yaml(input)
+        XCTAssertTrue(yaml.contains("mixed-port: 7891\n"))
+        XCTAssertTrue(yaml.contains("external-controller: \"127.0.0.1:9098\"\n"))
+        XCTAssertTrue(yaml.contains("secret: \"s3cret\"\n"))
+        XCTAssertTrue(yaml.contains("    url: \"https://air.example.com/sub?token=\\\"x\\\"\"\n"))
+        XCTAssertTrue(yaml.contains("    path: \"/tmp/core/providers/\(engine.subscriptions[0].providerName).yaml\"\n"))
+        XCTAssertTrue(yaml.contains("    use: [\(engine.subscriptions[0].providerName)]\n"))
+        XCTAssertTrue(yaml.contains("  - \"GEOIP,CN,DIRECT\"\n  - \"MATCH,节点\"\n"))
+        XCTAssertTrue(yaml.hasSuffix("\n"))
+        // 没有 MATCH 时补上。
+        var global = input
+        global.rules = ["DOMAIN-SUFFIX,x.com,DIRECT"]
+        XCTAssertTrue(CoreConfigBuilder.yaml(global).hasSuffix("  - \"MATCH,节点\"\n"))
+        XCTAssertEqual(CoreConfigBuilder.quote("a\"b\\c\n"), "\"a\\\"b\\\\c\\n\"")
+        XCTAssertEqual(CoreConfigBuilder.makeSecret().count, 32)
+    }
+
+    func testEngineModels() throws {
+        XCTAssertNil(Subscription.validate(url: "https://air.example.com/sub"))
+        XCTAssertNotNil(Subscription.validate(url: "ss://abc"))
+        XCTAssertNotNil(Subscription.validate(url: ""))
+        var engine = EngineConfig()
+        XCTAssertFalse(engine.wantsCore)
+        engine.subscriptions = [Subscription(name: "a", url: "https://x/y")]
+        XCTAssertTrue(engine.wantsCore)
+        engine.enabled = false
+        XCTAssertFalse(engine.wantsCore)
+        engine.ruleSource = .url(RulePresets.all[1].url)
+        let data = try JSONEncoder().encode(engine)
+        let decoded = try JSONDecoder().decode(EngineConfig.self, from: data)
+        XCTAssertEqual(decoded, engine)
+        XCTAssertEqual(decoded.ruleSource.title, "黑名单 + 去广告")
+        XCTAssertEqual(try JSONDecoder().decode(EngineConfig.self, from: Data("{}".utf8)).mixedPort, 7890)
+        XCTAssertEqual(try JSONDecoder().decode(RuleSource.self, from: Data(#"{"kind":"url","url":"https://a/b"}"#.utf8)), .url("https://a/b"))
+        XCTAssertEqual(try JSONDecoder().decode(RuleSource.self, from: Data(#"{"kind":"nope"}"#.utf8)), .chinaDirect)
+
+        // 内置代理的配置：HTTP 和 SOCKS 都指到内核端口。
+        let profile = Profile.engineProfile(port: 7890)
+        XCTAssertTrue(profile.engine)
+        XCTAssertEqual(profile.summary, "内置代理 · 127.0.0.1:7890")
+        let desired = DesiredProxy(profile: profile)
+        XCTAssertEqual(desired.http, DesiredProxy.Endpoint(host: "127.0.0.1", port: 7890))
+        XCTAssertEqual(desired.socks, DesiredProxy.Endpoint(host: "127.0.0.1", port: 7890))
+        let roundTrip = try JSONDecoder().decode(Profile.self, from: try JSONEncoder().encode(profile))
+        XCTAssertTrue(roundTrip.engine)
+    }
+
     func testReleaseNotesCleaning() {
         let notes = "## 0.2.0\r\n\r\n- 一键更新\r\n  * 子项\r\n普通一行"
         XCTAssertEqual(ReleaseNotes.cleaned(notes), "0.2.0\n\n• 一键更新\n• 子项\n普通一行")

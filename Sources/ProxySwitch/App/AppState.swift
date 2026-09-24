@@ -42,6 +42,7 @@ final class AppState: ObservableObject {
     @Published var loginItemEnabled = false
     let updater = Updater()
     let sync = CloudSync()
+    let engine = Engine()
     /// 更新后正在重新启动：退出时不要按「退出时关闭代理」清理。
     var relaunching = false
 
@@ -105,6 +106,49 @@ final class AppState: ObservableObject {
             .sink { [weak self] config in Task { @MainActor in self?.sync.localChanged(config) } }
             .store(in: &cancellables)
         sync.start(enabled: persisted.syncEnabled)
+        engine.readConfig = { [weak self] in self?.config ?? AppConfig() }
+        engine.writeEngine = { [weak self] engine in self?.config.engine = engine }
+        engine.onStatusChanged = { [weak self] in self?.onStatusChanged?() }
+        $config
+            .map { EngineInputs(engine: $0.engine, testURL: $0.testURL) }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in Task { @MainActor in self?.engineConfigChanged() } }
+            .store(in: &cancellables)
+        ensureEngineProfile()
+        engine.start()
+    }
+
+    /// 内置代理相关的设置变了：配置列表里对应的条目跟着变，内核重新加载。
+    private func engineConfigChanged() {
+        ensureEngineProfile()
+        if let index = config.profiles.firstIndex(where: { $0.engine }), config.profiles[index].port != config.engine.mixedPort {
+            config.profiles[index].port = config.engine.mixedPort
+        }
+        engine.scheduleReconcile()
+    }
+
+    /// 内置代理在配置列表里的那一条；有订阅时自动加上。
+    var engineProfile: Profile? { config.profiles.first { $0.engine } }
+
+    @discardableResult
+    func ensureEngineProfile() -> Profile? {
+        if let existing = engineProfile { return existing }
+        guard config.engine.wantsCore else { return nil }
+        let profile = Profile.engineProfile(port: config.engine.mixedPort)
+        config.profiles.insert(profile, at: 0)
+        if config.profiles.count == 1 {
+            persisted.lastProfileID = profile.id
+            Store.save(persisted)
+        }
+        return profile
+    }
+
+    /// 让内置代理成为下次开启的配置（面板里选了节点时用）。
+    func selectEngineProfile() {
+        guard let profile = ensureEngineProfile() else { return }
+        persisted.lastProfileID = profile.id
+        Store.save(persisted)
     }
 
     // MARK: - 状态
@@ -174,6 +218,14 @@ final class AppState: ObservableObject {
         let mode = config.offMode
         Task {
             var failures: [String] = []
+            if profile.engine {
+                do {
+                    try await engine.ensureRunning()
+                } catch {
+                    finish(action: "开启 \(profile.name)", failures: ["内核：\(error.localizedDescription)"], successText: "")
+                    return
+                }
+            }
             // 上一个配置设置过、新配置没有的项先清掉。
             if let previous {
                 for target in previous.targets where !profile.targets.contains(target) {
@@ -425,8 +477,9 @@ final class AppState: ObservableObject {
         Notifier.shared.show(title: title, body: body, route: route)
     }
 
-    /// 退出时按设置关闭代理。
+    /// 退出时按设置关闭代理，并停掉内核。
     func handleExit() {
+        defer { engine.shutdown() }
         guard !relaunching, config.disableOnExit, case .on(let profile) = status else { return }
         let desired = DesiredProxy(offWithAutoDiscovery: persisted.original?.autoDiscovery ?? snapshot.autoDiscovery, bypassDomains: snapshot.exceptions)
         let semaphore = DispatchSemaphore(value: 0)
@@ -451,4 +504,10 @@ final class AppState: ObservableObject {
             lastError = "快捷键 \(binding.display) 已被其他程序占用，请换一个"
         }
     }
+}
+
+/// 会影响内核配置的那部分设置，变了才重新生成。
+private struct EngineInputs: Equatable {
+    var engine: EngineConfig
+    var testURL: String
 }

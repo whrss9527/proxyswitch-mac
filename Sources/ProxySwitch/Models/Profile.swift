@@ -69,6 +69,8 @@ struct Profile: Codable, Identifiable, Equatable, Hashable {
     var bypass: String = Profile.defaultBypass
     var noProxy: String = Profile.defaultNoProxy
     var targets: Set<ProxyTarget> = [.system]
+    /// 内置代理：地址是本机内核的端口，开启前先确保内核在跑。
+    var engine: Bool = false
 
     init() {}
 
@@ -83,7 +85,7 @@ struct Profile: Codable, Identifiable, Equatable, Hashable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, color, kind, host, port, pacURL, bypass, noProxy, targets
+        case id, name, color, kind, host, port, pacURL, bypass, noProxy, targets, engine
     }
 
     init(from decoder: Decoder) throws {
@@ -98,6 +100,14 @@ struct Profile: Codable, Identifiable, Equatable, Hashable {
         bypass = try container.decodeIfPresent(String.self, forKey: .bypass) ?? Profile.defaultBypass
         noProxy = try container.decodeIfPresent(String.self, forKey: .noProxy) ?? Profile.defaultNoProxy
         targets = try container.decodeIfPresent(Set<ProxyTarget>.self, forKey: .targets) ?? [.system]
+        engine = try container.decodeIfPresent(Bool.self, forKey: .engine) ?? false
+    }
+
+    /// 内置代理对应的配置。
+    static func engineProfile(port: Int) -> Profile {
+        var profile = Profile(name: "节点代理", color: ProfilePalette.colors[1], kind: .http, host: "127.0.0.1", port: port)
+        profile.engine = true
+        return profile
     }
 
     /// host:port。
@@ -113,6 +123,7 @@ struct Profile: Codable, Identifiable, Equatable, Hashable {
 
     /// 菜单和列表里显示的一句话。
     var summary: String {
+        if engine { return "内置代理 · \(serverAddress)" }
         switch kind {
         case .pac: return pacURL.isEmpty ? "PAC 脚本" : pacURL
         case .socks5: return "socks5://\(serverAddress)"

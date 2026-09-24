@@ -68,11 +68,13 @@ struct AppConfig: Codable, Equatable {
     var disableOnExit: Bool = false
     var testURL: String = AppConfig.defaultTestURL
     var autoCheckUpdates: Bool = true
+    /// 内置代理（订阅、节点、模式）。
+    var engine = EngineConfig()
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case profiles, clickAction, toggleHotkey, offMode, notifyLevel, healthCheck, disableOnExit, testURL, autoCheckUpdates
+        case profiles, clickAction, toggleHotkey, offMode, notifyLevel, healthCheck, disableOnExit, testURL, autoCheckUpdates, engine
     }
 
     init(from decoder: Decoder) throws {
@@ -90,6 +92,7 @@ struct AppConfig: Codable, Equatable {
         disableOnExit = try container.decodeIfPresent(Bool.self, forKey: .disableOnExit) ?? false
         testURL = try container.decodeIfPresent(String.self, forKey: .testURL) ?? AppConfig.defaultTestURL
         autoCheckUpdates = try container.decodeIfPresent(Bool.self, forKey: .autoCheckUpdates) ?? true
+        engine = try container.decodeIfPresent(EngineConfig.self, forKey: .engine) ?? EngineConfig()
     }
 
     func encode(to encoder: Encoder) throws {
@@ -104,6 +107,7 @@ struct AppConfig: Codable, Equatable {
         try container.encode(disableOnExit, forKey: .disableOnExit)
         try container.encode(testURL, forKey: .testURL)
         try container.encode(autoCheckUpdates, forKey: .autoCheckUpdates)
+        try container.encode(engine, forKey: .engine)
     }
 
     func profile(id: UUID?) -> Profile? {

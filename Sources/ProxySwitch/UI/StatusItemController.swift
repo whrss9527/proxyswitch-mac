@@ -22,9 +22,13 @@ final class StatusItemController: NSObject {
             _ = button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             button.imagePosition = .imageOnly
         }
-        // 更新条出现、进度变化时面板高度会变，跟着调整窗口。
+        // 更新条出现、进度变化、节点列表变化时面板高度会变，跟着调整窗口。
         state.updater.$phase
             .debounce(for: .milliseconds(50), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in Task { @MainActor in self?.resizePanelIfVisible() } }
+            .store(in: &cancellables)
+        state.engine.objectWillChange
+            .debounce(for: .milliseconds(80), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in Task { @MainActor in self?.resizePanelIfVisible() } }
             .store(in: &cancellables)
     }
@@ -135,6 +139,12 @@ final class StatusItemController: NSObject {
                 menu.addItem(menuItem)
             }
         }
+        if state.config.engine.wantsCore {
+            menu.addItem(.separator())
+            let nodesItem = NSMenuItem(title: "节点", action: nil, keyEquivalent: "")
+            nodesItem.submenu = nodesMenu()
+            menu.addItem(nodesItem)
+        }
         menu.addItem(.separator())
         let updater = state.updater
         if let release = updater.release, updater.isInstalling {
@@ -182,6 +192,50 @@ final class StatusItemController: NSObject {
         state.updater.install()
     }
 
+    /// 「节点」子菜单：模式、自动选择、所有节点。
+    private func nodesMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for mode in EngineMode.allCases {
+            let menuItem = NSMenuItem(title: mode.title, action: #selector(menuSetMode(_:)), keyEquivalent: "")
+            menuItem.target = self
+            menuItem.representedObject = mode.rawValue
+            menuItem.state = state.config.engine.mode == mode ? .on : .off
+            menu.addItem(menuItem)
+        }
+        menu.addItem(.separator())
+        let engine = state.engine
+        guard engine.isRunning else {
+            menu.addItem(header(engine.status == .starting ? "内核正在启动…" : "内核未运行"))
+            return menu
+        }
+        let auto = NSMenuItem(title: "自动选择" + (engine.autoNode.map { "（\($0)）" } ?? ""), action: #selector(menuSelectNode(_:)), keyEquivalent: "")
+        auto.target = self
+        auto.representedObject = ""
+        auto.state = engine.currentSelection == Engine.autoGroup ? .on : .off
+        menu.addItem(auto)
+        for node in engine.nodes {
+            let title = node.delayText.isEmpty ? node.name : "\(node.name)　\(node.delayText)"
+            let menuItem = NSMenuItem(title: title, action: #selector(menuSelectNode(_:)), keyEquivalent: "")
+            menuItem.target = self
+            menuItem.representedObject = node.name
+            menuItem.state = engine.currentSelection == node.name ? .on : .off
+            menu.addItem(menuItem)
+        }
+        return menu
+    }
+
+    @objc private func menuSetMode(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let mode = EngineMode(rawValue: raw) else { return }
+        state.engine.setMode(mode)
+    }
+
+    @objc private func menuSelectNode(_ sender: NSMenuItem) {
+        let name = sender.representedObject as? String
+        state.selectEngineProfile()
+        Task { await state.engine.select(name?.isEmpty == false ? name : nil) }
+    }
+
     @objc private func menuUseProfile(_ sender: NSMenuItem) {
         guard let text = sender.representedObject as? String, let id = UUID(uuidString: text),
               let profile = state.config.profile(id: id) else { return }
@@ -200,7 +254,7 @@ final class StatusItemController: NSObject {
 
     func openPanel() {
         if panel == nil {
-            let view = PanelView(state: state, actions: PanelActions(
+            let view = PanelView(state: state, engine: state.engine, actions: PanelActions(
                 openSettings: { [weak self] page in
                     MainActor.assumeIsolated {
                         self?.closePanel()
@@ -212,6 +266,11 @@ final class StatusItemController: NSObject {
                 },
                 quit: {
                     MainActor.assumeIsolated { NSApp.terminate(nil) }
+                },
+                layoutChanged: { [weak self] in
+                    MainActor.assumeIsolated {
+                        DispatchQueue.main.async { self?.resizePanelIfVisible() }
+                    }
                 }
             ))
             let hosting = NSHostingView(rootView: view)

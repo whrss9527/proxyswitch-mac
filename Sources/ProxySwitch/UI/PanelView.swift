@@ -5,14 +5,19 @@ struct PanelActions {
     var openSettings: (SettingsPage?) -> Void
     var close: () -> Void
     var quit: () -> Void
+    /// 面板内容高度变了（展开节点列表等），窗口要跟着调整。
+    var layoutChanged: () -> Void
 }
 
-/// 菜单栏面板：状态卡片和大开关、配置列表、快捷操作。
+/// 菜单栏面板：状态卡片和大开关、节点卡片、配置列表、快捷操作。
 struct PanelView: View {
     @ObservedObject var state: AppState
+    @ObservedObject var engine: Engine
     let actions: PanelActions
     @State private var testing = false
     @State private var copied = false
+    @State private var showNodes = false
+    @State private var nodeFilter = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -21,6 +26,9 @@ struct PanelView: View {
                 externalCard
             }
             UpdateBanner(updater: state.updater) { actions.openSettings(.about) }
+            if state.config.engine.wantsCore {
+                nodeCard
+            }
             if !state.config.profiles.isEmpty {
                 profileList
             } else {
@@ -88,6 +96,9 @@ struct PanelView: View {
         switch state.status {
         case .on(let profile):
             if state.health == .down { return "代理服务器连不上" }
+            if profile.engine, let node = engine.effectiveNode {
+                return "节点 \(node)" + (engine.effectiveNodeInfo?.delayText.isEmpty == false ? " · \(engine.effectiveNodeInfo!.delayText)" : "")
+            }
             if let result = state.testResults[profile.id], result.ok, let latency = result.latencyMs {
                 return "\(profile.summary) · \(latency) ms"
             }
@@ -113,6 +124,170 @@ struct PanelView: View {
         }
         .padding(10)
         .glassCard()
+    }
+
+    // MARK: - 节点
+
+    private var nodeCard: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 10) {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 14))
+                    .foregroundStyle(engine.isRunning ? Color.accentColor : Color.secondary)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(nodeTitle)
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                    Text(nodeSubtitle)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { toggleNodes() }
+                Spacer(minLength: 4)
+                Picker("", selection: Binding(get: { state.config.engine.mode }, set: { engine.setMode($0) })) {
+                    Text("全局").tag(EngineMode.global)
+                    Text("规则").tag(EngineMode.rule)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.mini)
+                .frame(width: 84)
+                .help("全局：全部走节点；规则：按分流规则")
+                Button {
+                    toggleNodes()
+                } label: {
+                    Image(systemName: showNodes ? "chevron.up" : "chevron.down")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help(showNodes ? "收起节点列表" : "选择节点")
+            }
+            if showNodes {
+                nodeList
+            }
+        }
+        .padding(10)
+        .glassCard()
+    }
+
+    private func toggleNodes() {
+        showNodes.toggle()
+        actions.layoutChanged()
+    }
+
+    private var nodeTitle: String {
+        switch engine.status {
+        case .off: return state.config.engine.enabled ? "内置代理未运行" : "内置代理已停用"
+        case .starting: return "内核正在启动…"
+        case .failed: return "内核出错"
+        case .running:
+            if engine.currentSelection == Engine.autoGroup {
+                return "自动选择 · \(engine.autoNode ?? "…")"
+            }
+            return engine.currentSelection ?? "未选择节点"
+        }
+    }
+
+    private var nodeSubtitle: String {
+        if case .failed(let message) = engine.status { return message }
+        var parts: [String] = []
+        if let node = engine.effectiveNodeInfo {
+            parts.append(node.type.uppercased())
+            if !node.delayText.isEmpty { parts.append(node.delayText) }
+        }
+        parts.append("\(engine.nodes.count) 个节点 · \(state.config.engine.mode == .global ? "全局" : "规则分流")")
+        return parts.joined(separator: " · ")
+    }
+
+    private var filteredNodes: [Engine.Node] {
+        let filter = nodeFilter.trimmingCharacters(in: .whitespaces)
+        if filter.isEmpty { return engine.nodes }
+        return engine.nodes.filter { $0.name.localizedCaseInsensitiveContains(filter) }
+    }
+
+    private var nodeList: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 6) {
+                TextField("搜索节点", text: $nodeFilter)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.small)
+                    .onChange(of: nodeFilter) { _, _ in actions.layoutChanged() }
+                Button {
+                    Task { await engine.testAll() }
+                } label: {
+                    if engine.testing {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "speedometer")
+                    }
+                }
+                .buttonStyle(IconButtonStyle())
+                .help("测试全部节点的延迟")
+                .disabled(engine.testing || !engine.isRunning)
+            }
+            ScrollView {
+                LazyVStack(spacing: 1) {
+                    nodeRow(name: Engine.autoGroup, type: "自动", delay: nil, subtitle: engine.autoNode.map { "当前 \($0)" } ?? "延迟最低的节点", selected: engine.currentSelection == Engine.autoGroup) {
+                        Task { await engine.select(nil) }
+                    }
+                    ForEach(filteredNodes) { node in
+                        nodeRow(name: node.name, type: node.type, delay: node.delay, subtitle: node.subscription, selected: engine.currentSelection == node.name) {
+                            Task { await engine.select(node.name) }
+                        }
+                    }
+                }
+            }
+            .frame(height: min(220, CGFloat(filteredNodes.count + 1) * 36))
+        }
+        .padding(.top, 4)
+    }
+
+    private func nodeRow(name: String, type: String, delay: Int?, subtitle: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            state.selectEngineProfile()
+            action()
+        } label: {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(name)
+                        .font(.system(size: 11, weight: selected ? .semibold : .regular))
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                Text(type.uppercased())
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+                if let delay {
+                    Text(delay > 0 ? "\(delay) ms" : "超时")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(delayColor(delay))
+                }
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary.opacity(0.5))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(HoverRowStyle())
+        .disabled(!engine.isRunning)
+    }
+
+    private func delayColor(_ delay: Int) -> Color {
+        if delay <= 0 { return .red }
+        if delay < 300 { return .green }
+        if delay < 800 { return .orange }
+        return .red
     }
 
     // MARK: - 配置列表

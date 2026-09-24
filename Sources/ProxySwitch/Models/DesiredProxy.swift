@@ -18,6 +18,9 @@ struct DesiredProxy: Equatable {
         switch profile.kind {
         case .http:
             http = Endpoint(host: profile.host, port: profile.port)
+            if profile.engine {
+                socks = Endpoint(host: profile.host, port: profile.port)
+            }
         case .socks5:
             socks = Endpoint(host: profile.host, port: profile.port)
         case .pac:

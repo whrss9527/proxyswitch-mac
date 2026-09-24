@@ -178,15 +178,29 @@ struct ProfileEditor: View {
                             .buttonStyle(.plain)
                         }
                     }
-                    Picker("类型", selection: $draft.kind) {
-                        ForEach(ProxyKind.allCases) { kind in
-                            Text(kind.title).tag(kind)
+                    if !draft.engine {
+                        Picker("类型", selection: $draft.kind) {
+                            ForEach(ProxyKind.allCases) { kind in
+                                Text(kind.title).tag(kind)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                }
+                if draft.engine {
+                    Section("内置代理") {
+                        Text("这是内置代理：地址是本机内核的端口（\(draft.host):\(String(draft.port))），订阅、节点、模式和端口都在「节点与订阅」页管理。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("管理节点与订阅") {
+                            SettingsWindowController.shared.show(page: .nodes)
                         }
                     }
-                    .pickerStyle(.segmented)
                 }
                 Section {
-                    if draft.kind == .pac {
+                    if draft.engine {
+                        EmptyView()
+                    } else if draft.kind == .pac {
                         TextField("PAC 地址", text: $draft.pacURL, prompt: Text("http://127.0.0.1:7890/proxy.pac"))
                     } else {
                         TextField("主机", text: $draft.host, prompt: Text("127.0.0.1"))
@@ -203,9 +217,11 @@ struct ProfileEditor: View {
                             }
                     }
                 } header: {
-                    Text(draft.kind == .pac ? "PAC 脚本" : "代理服务器")
+                    if !draft.engine {
+                        Text(draft.kind == .pac ? "PAC 脚本" : "代理服务器")
+                    }
                 } footer: {
-                    if draft.kind != .pac {
+                    if draft.kind != .pac && !draft.engine {
                         Text("可以直接把 127.0.0.1:7890 或 socks5://127.0.0.1:1080 这样的整段地址粘到「主机」里，会自动拆开。")
                     }
                 }
