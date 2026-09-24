@@ -157,6 +157,21 @@ final class ParsingTests: XCTestCase {
         XCTAssertFalse(UpdateChecker.isNewer("0.9", than: "1.0"))
     }
 
+    func testProxyAddressParse() {
+        XCTAssertEqual(ProxyAddress.parse("127.0.0.1:7890"), ProxyAddress(kind: nil, host: "127.0.0.1", port: 7890))
+        XCTAssertEqual(ProxyAddress.parse(" http://127.0.0.1:7890/ "), ProxyAddress(kind: .http, host: "127.0.0.1", port: 7890))
+        XCTAssertEqual(ProxyAddress.parse("socks5://user:pass@proxy.corp:1080"), ProxyAddress(kind: .socks5, host: "proxy.corp", port: 1080))
+        XCTAssertEqual(ProxyAddress.parse("[::1]:1080"), ProxyAddress(kind: nil, host: "::1", port: 1080))
+        XCTAssertEqual(ProxyAddress.parse("https://proxy.corp"), ProxyAddress(kind: .http, host: "proxy.corp", port: nil))
+        XCTAssertEqual(ProxyAddress.parse("proxy.corp"), ProxyAddress(kind: nil, host: "proxy.corp", port: nil))
+        XCTAssertFalse(ProxyAddress.parse("proxy.corp")!.splitsFields)
+        XCTAssertTrue(ProxyAddress.parse("proxy.corp:3128")!.splitsFields)
+        XCTAssertNil(ProxyAddress.parse(""))
+        XCTAssertNil(ProxyAddress.parse("ftp://x:1"))
+        XCTAssertNil(ProxyAddress.parse("host:abc"))
+        XCTAssertNil(ProxyAddress.parse("host:70000"))
+    }
+
     func testProfileValidation() {
         var profile = Profile(name: "x", color: "#000", kind: .http, host: "127.0.0.1", port: 7890)
         XCTAssertNil(profile.validate())

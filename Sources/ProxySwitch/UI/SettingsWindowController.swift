@@ -52,8 +52,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         if window == nil {
             window = makeWindow()
         }
+        // 设置窗口打开期间当普通应用：菜单栏显示编辑菜单，⌘Tab 能切到它；关闭后回到只有菜单栏图标。
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
     }
 
     private func makeWindow() -> NSWindow {

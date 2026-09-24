@@ -185,15 +185,28 @@ struct ProfileEditor: View {
                     }
                     .pickerStyle(.segmented)
                 }
-                Section(draft.kind == .pac ? "PAC 脚本" : "代理服务器") {
+                Section {
                     if draft.kind == .pac {
                         TextField("PAC 地址", text: $draft.pacURL, prompt: Text("http://127.0.0.1:7890/proxy.pac"))
                     } else {
                         TextField("主机", text: $draft.host, prompt: Text("127.0.0.1"))
+                            .onChange(of: draft.host) { _, value in
+                                splitPastedAddress(value)
+                            }
                         TextField("端口", text: $portText, prompt: Text("7890"))
                             .onChange(of: portText) { _, value in
-                                draft.port = Int(value.trimmingCharacters(in: .whitespaces)) ?? 0
+                                let digits = value.filter(\.isNumber)
+                                if digits != value {
+                                    portText = digits
+                                }
+                                draft.port = Int(digits) ?? 0
                             }
+                    }
+                } header: {
+                    Text(draft.kind == .pac ? "PAC 脚本" : "代理服务器")
+                } footer: {
+                    if draft.kind != .pac {
+                        Text("可以直接把 127.0.0.1:7890 或 socks5://127.0.0.1:1080 这样的整段地址粘到「主机」里，会自动拆开。")
                     }
                 }
                 Section("生效范围") {
@@ -235,6 +248,7 @@ struct ProfileEditor: View {
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
+            .onSubmit { save() }
 
             Divider()
                 .padding(.horizontal, 20)
@@ -274,6 +288,19 @@ struct ProfileEditor: View {
             .padding(.vertical, 14)
         }
         .glassCard()
+    }
+
+    /// 粘贴了带类型或端口的整段地址时拆到各个字段。
+    private func splitPastedAddress(_ text: String) {
+        guard let address = ProxyAddress.parse(text), address.splitsFields else { return }
+        if let kind = address.kind {
+            draft.kind = kind
+        }
+        if let port = address.port {
+            draft.port = port
+            portText = String(port)
+        }
+        draft.host = address.host
     }
 
     private func save() {

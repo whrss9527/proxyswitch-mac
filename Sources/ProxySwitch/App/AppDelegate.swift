@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusController: StatusItemController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        MainMenu.install()
         let state = AppState.shared
         Notifier.shared.onOpen = { SettingsWindowController.shared.show(page: .profiles) }
         let controller = StatusItemController(state: state)
