@@ -31,6 +31,35 @@ final class StatusItemController: NSObject {
             .debounce(for: .milliseconds(80), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in Task { @MainActor in self?.resizePanelIfVisible() } }
             .store(in: &cancellables)
+        state.speed.onUpdate = { [weak self] in self?.updateSpeedLabel() }
+        updateSpeedLabel()
+    }
+
+    // MARK: - 网速
+
+    /// 图标右边两行小字：上行、下行。
+    private func updateSpeedLabel() {
+        guard let button = statusItem.button else { return }
+        let meter = state.speed
+        guard meter.mode != .none else {
+            button.attributedTitle = NSAttributedString(string: "")
+            button.imagePosition = .imageOnly
+            return
+        }
+        let text = "↑\(SpeedFormatter.compact(bytesPerSecond: meter.upload))\n↓\(SpeedFormatter.compact(bytesPerSecond: meter.download))"
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .right
+        paragraph.minimumLineHeight = 9
+        paragraph.maximumLineHeight = 9
+        paragraph.lineSpacing = 1
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .medium),
+            .paragraphStyle: paragraph,
+            .baselineOffset: -1,
+        ]
+        button.attributedTitle = NSAttributedString(string: text, attributes: attributes)
+        button.imagePosition = .imageLeft
+        button.imageHugsTitle = true
     }
 
     // MARK: - 图标
@@ -48,7 +77,7 @@ final class StatusItemController: NSObject {
             iconState = .off
         }
         button.image = StatusIcon.image(for: iconState)
-        button.toolTip = tooltip
+        button.toolTip = tooltip + (state.speed.mode == .none ? "" : "\n↑ \(SpeedFormatter.full(bytesPerSecond: state.speed.upload))  ↓ \(SpeedFormatter.full(bytesPerSecond: state.speed.download))")
         if let panel, panel.isVisible {
             resizePanel()
         }

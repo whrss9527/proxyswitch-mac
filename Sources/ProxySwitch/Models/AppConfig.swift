@@ -56,6 +56,23 @@ struct HotkeyBinding: Codable, Equatable {
     static let defaultToggle = HotkeyBinding(keyCode: 0x23, modifiers: KeyNames.controlKey | KeyNames.optionKey, display: "⌃⌥P")
 }
 
+/// 菜单栏图标旁边的实时网速。
+enum SpeedDisplay: String, Codable, CaseIterable, Identifiable {
+    case none
+    case system
+    case engine
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .none: return "不显示"
+        case .system: return "系统网络总速度"
+        case .engine: return "只算内置代理"
+        }
+    }
+}
+
 struct AppConfig: Codable, Equatable {
     static let defaultTestURL = "https://cp.cloudflare.com/generate_204"
 
@@ -70,11 +87,12 @@ struct AppConfig: Codable, Equatable {
     var autoCheckUpdates: Bool = true
     /// 内置代理（订阅、节点、模式）。
     var engine = EngineConfig()
+    var speedDisplay: SpeedDisplay = .system
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case profiles, clickAction, toggleHotkey, offMode, notifyLevel, healthCheck, disableOnExit, testURL, autoCheckUpdates, engine
+        case profiles, clickAction, toggleHotkey, offMode, notifyLevel, healthCheck, disableOnExit, testURL, autoCheckUpdates, engine, speedDisplay
     }
 
     init(from decoder: Decoder) throws {
@@ -93,6 +111,7 @@ struct AppConfig: Codable, Equatable {
         testURL = try container.decodeIfPresent(String.self, forKey: .testURL) ?? AppConfig.defaultTestURL
         autoCheckUpdates = try container.decodeIfPresent(Bool.self, forKey: .autoCheckUpdates) ?? true
         engine = try container.decodeIfPresent(EngineConfig.self, forKey: .engine) ?? EngineConfig()
+        speedDisplay = try container.decodeIfPresent(SpeedDisplay.self, forKey: .speedDisplay) ?? .system
     }
 
     func encode(to encoder: Encoder) throws {
@@ -108,6 +127,7 @@ struct AppConfig: Codable, Equatable {
         try container.encode(testURL, forKey: .testURL)
         try container.encode(autoCheckUpdates, forKey: .autoCheckUpdates)
         try container.encode(engine, forKey: .engine)
+        try container.encode(speedDisplay, forKey: .speedDisplay)
     }
 
     func profile(id: UUID?) -> Profile? {

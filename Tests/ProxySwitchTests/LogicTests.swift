@@ -367,6 +367,27 @@ final class ParsingTests: XCTestCase {
         XCTAssertTrue(roundTrip.engine)
     }
 
+    func testSpeedFormatter() {
+        let figure = "\u{2007}"
+        XCTAssertEqual(SpeedFormatter.compact(bytesPerSecond: 0), figure + figure + figure + "0B")
+        XCTAssertEqual(SpeedFormatter.compact(bytesPerSecond: 999), figure + "999B")
+        XCTAssertEqual(SpeedFormatter.compact(bytesPerSecond: 1024), figure + "1.0K")
+        XCTAssertEqual(SpeedFormatter.compact(bytesPerSecond: 9_900), figure + "9.7K")
+        XCTAssertEqual(SpeedFormatter.compact(bytesPerSecond: 512_000), figure + "500K")
+        XCTAssertEqual(SpeedFormatter.compact(bytesPerSecond: 1_258_291), figure + "1.2M")
+        XCTAssertEqual(SpeedFormatter.compact(bytesPerSecond: 125_829_120), figure + "120M")
+        XCTAssertEqual(SpeedFormatter.compact(bytesPerSecond: 2_147_483_648), figure + "2.0G")
+        XCTAssertTrue(SpeedFormatter.compact(bytesPerSecond: -5).hasSuffix("0B"))
+        XCTAssertTrue(SpeedFormatter.full(bytesPerSecond: 2048).hasSuffix("/s"))
+        // 32 位计数回绕后的差值也对。
+        let old = ["en0": InterfaceCounters.Sample(received: UInt32.max - 10, sent: 100)]
+        let new = ["en0": InterfaceCounters.Sample(received: 20, sent: 150), "en1": InterfaceCounters.Sample(received: 5, sent: 5)]
+        let delta = InterfaceCounters.delta(from: old, to: new)
+        XCTAssertEqual(delta.received, 31)
+        XCTAssertEqual(delta.sent, 50)
+        XCTAssertNotNil(InterfaceCounters.read())
+    }
+
     func testReleaseNotesCleaning() {
         let notes = "## 0.2.0\r\n\r\n- 一键更新\r\n  * 子项\r\n普通一行"
         XCTAssertEqual(ReleaseNotes.cleaned(notes), "0.2.0\n\n• 一键更新\n• 子项\n普通一行")

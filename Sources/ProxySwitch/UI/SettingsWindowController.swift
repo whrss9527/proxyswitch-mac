@@ -180,6 +180,14 @@ struct GeneralPage: View {
                     Text("右键或 Control + 点击总是弹出菜单")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Picker("实时网速", selection: $state.config.speedDisplay) {
+                        ForEach(SpeedDisplay.allCases) { display in
+                            Text(display.title).tag(display)
+                        }
+                    }
+                    Text("显示在图标右边，上行在上、下行在下。「系统网络总速度」统计有线和 Wi‑Fi 网卡的全部流量；「只算内置代理」是经过内核的流量。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Section("代理") {
                     Picker("关闭代理时", selection: $state.config.offMode) {

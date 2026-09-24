@@ -86,6 +86,12 @@ final class Engine: ObservableObject {
 
     var logTail: String { runner.logTail }
 
+    /// 内核的实时流量流；没在跑时是 nil。
+    func trafficStream() async throws -> URLSession.AsyncBytes? {
+        guard let api, isRunning else { return nil }
+        return try await api.trafficBytes()
+    }
+
     // MARK: - 生命周期
 
     func start() {

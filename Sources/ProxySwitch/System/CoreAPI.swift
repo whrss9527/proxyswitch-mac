@@ -71,6 +71,7 @@ final class CoreAPI {
     let baseURL: URL
     let secret: String
     private let session: URLSession
+    private let streamSession: URLSession
 
     init(port: Int, secret: String) {
         baseURL = URL(string: "http://127.0.0.1:\(port)")!
@@ -80,6 +81,23 @@ final class CoreAPI {
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 60
         session = URLSession(configuration: configuration)
+        // 长连接的流（/traffic 每秒一行），不设总时长限制。
+        let streaming = URLSessionConfiguration.ephemeral
+        streaming.connectionProxyDictionary = [:]
+        streaming.timeoutIntervalForRequest = 30
+        streaming.timeoutIntervalForResource = .greatestFiniteMagnitude
+        streamSession = URLSession(configuration: streaming)
+    }
+
+    /// 实时流量：每秒一行 {"up":字节数,"down":字节数}。
+    func trafficBytes() async throws -> URLSession.AsyncBytes {
+        var request = URLRequest(url: URL(string: "/traffic", relativeTo: baseURL)!.absoluteURL)
+        request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
+        let (bytes, response) = try await streamSession.bytes(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw CoreAPIError.status(http.statusCode, "")
+        }
+        return bytes
     }
 
     func version() async throws -> String {

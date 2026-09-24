@@ -43,6 +43,7 @@ final class AppState: ObservableObject {
     let updater = Updater()
     let sync = CloudSync()
     let engine = Engine()
+    let speed = SpeedMeter()
     /// 更新后正在重新启动：退出时不要按「退出时关闭代理」清理。
     var relaunching = false
 
@@ -117,6 +118,14 @@ final class AppState: ObservableObject {
             .store(in: &cancellables)
         ensureEngineProfile()
         engine.start()
+        speed.coreTraffic = { [weak self] in try await self?.engine.trafficStream() }
+        speed.setMode(config.speedDisplay)
+        $config
+            .map(\.speedDisplay)
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] mode in Task { @MainActor in self?.speed.setMode(mode) } }
+            .store(in: &cancellables)
     }
 
     /// 内置代理相关的设置变了：配置列表里对应的条目跟着变，内核重新加载。
