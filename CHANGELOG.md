@@ -1,6 +1,6 @@
 # 更新日志
 
-## 0.1.0（未发布）
+## 0.1.0（2026-09-24）
 
 第一个版本，从 [proxyswitch](https://github.com/whrss9527/proxyswitch)（Windows 版）仓库拆出。
 
