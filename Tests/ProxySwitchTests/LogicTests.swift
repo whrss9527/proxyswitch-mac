@@ -235,7 +235,7 @@ final class ParsingTests: XCTestCase {
                        InstallPlan(target: installed, trashAfter: nil, relocating: true))
         // 浏览器给重名文件加了后缀：装回标准名字。
         let renamed = URL(fileURLWithPath: "/Users/me/Downloads/ProxySwitch (1).app")
-        XCTAssertEqual(InstallLocation.plan(bundle: translocated, translocated: true, original: renamed, readOnly: true, folders: folders, canWrite: everything)?.target, installed)
+        XCTAssertEqual(InstallLocation.plan(bundle: translocated, translocated: true, original: renamed, readOnly: true, folders: folders, canWrite: everything)?.target.path, installed.path)
         // 只读的磁盘（比如挂载的映像）：也搬。
         XCTAssertEqual(InstallLocation.plan(bundle: URL(fileURLWithPath: "/Volumes/PS/ProxySwitch.app"), translocated: false, original: nil, readOnly: true, folders: folders, canWrite: everything)?.relocating, true)
         // 不是 .app（开发时 swift run）：没法更新。

@@ -76,6 +76,13 @@ struct InstallPlan: Equatable {
     var trashAfter: URL?
     /// 从临时位置搬进「应用程序」，而不是原地替换。
     var relocating: Bool
+
+    /// 按路径比较：同一个 .app 的 URL 可能带或不带结尾的 /（取决于它当时在不在磁盘上）。
+    static func == (a: InstallPlan, b: InstallPlan) -> Bool {
+        a.target.standardizedFileURL.path == b.target.standardizedFileURL.path
+            && a.trashAfter?.standardizedFileURL.path == b.trashAfter?.standardizedFileURL.path
+            && a.relocating == b.relocating
+    }
 }
 
 /// 平时原地替换；从只读的临时位置运行时（系统搬走了、或者在只读的磁盘上），装进「应用程序」。
@@ -115,7 +122,7 @@ enum InstallLocation {
         guard let first = folders.first else { return nil }
         let folder = folders.first(where: canWrite) ?? first
         let target = folder.appendingPathComponent(appName, isDirectory: true).standardizedFileURL
-        let trash = original.flatMap { $0.standardizedFileURL == target ? nil : $0 }
+        let trash = original.flatMap { $0.standardizedFileURL.path == target.path ? nil : $0 }
         return InstallPlan(target: target, trashAfter: trash, relocating: true)
     }
 
