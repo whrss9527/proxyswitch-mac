@@ -28,7 +28,12 @@ jobs:
           path: .core-cache
           key: core-${{ hashFiles('Scripts/build-app.sh') }}
       - name: 打包 .app（本机架构）
-        run: VERSION=0.0.0 ARCHS="" Scripts/build-app.sh
+        run: |
+          VERSION=0.0.0 ARCHS="" THIN_ARCHIVES=1 Scripts/build-app.sh
+          [ -f dist/ProxySwitch-macos-arm64.zip ] || { echo "没有生成 arm64 精简包"; exit 1; }
+          lipo -archs dist/thin-arm64/ProxySwitch.app/Contents/MacOS/mihomo
+          [ "$(lipo -archs dist/thin-arm64/ProxySwitch.app/Contents/MacOS/mihomo)" = "arm64" ] || { echo "精简包里的内核不是单架构"; exit 1; }
+          ls -la dist/*.zip
       - name: 冒烟启动并截图
         run: |
           support="$HOME/Library/Application Support/ProxySwitch"
@@ -104,17 +109,21 @@ jobs:
       - name: 端到端更新测试（本地假发布）
         run: |
           support="$HOME/Library/Application Support/ProxySwitch"
-          # 用打包好的程序造一个 9.9.9 版本，放到本地 HTTP 服务器上当作 GitHub 的最新发布。
+          # 留一份原版，后面测「从临时位置运行」时用。
+          rm -rf relocate-src && mkdir -p relocate-src && ditto dist/ProxySwitch.app relocate-src/ProxySwitch.app
+          # 用打包好的程序造一个 9.9.9 版本，放到本地 HTTP 服务器上当作 GitHub 的最新发布：通用包和 arm64 精简包各一份。
           rm -rf feed && mkdir -p feed
           cp -R dist/ProxySwitch.app feed/ProxySwitch.app
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 9.9.9" feed/ProxySwitch.app/Contents/Info.plist
           codesign --force --deep --sign - feed/ProxySwitch.app
-          (cd feed && ditto -c -k --keepParent ProxySwitch.app ProxySwitch-macos.zip && rm -rf ProxySwitch.app && shasum -a 256 ProxySwitch-macos.zip > SHA256SUMS.txt)
+          (cd feed && ditto -c -k --keepParent ProxySwitch.app ProxySwitch-macos.zip && cp ProxySwitch-macos.zip ProxySwitch-macos-arm64.zip && rm -rf ProxySwitch.app \
+            && shasum -a 256 ProxySwitch-macos.zip ProxySwitch-macos-arm64.zip > SHA256SUMS.txt && cat SHA256SUMS.txt)
           size=$(stat -f %z feed/ProxySwitch-macos.zip)
           cat > feed/latest.json <<JSON
           {"tag_name":"v9.9.9","html_url":"http://127.0.0.1:8765/latest.json","published_at":"2026-01-01T00:00:00Z",
            "body":"## 9.9.9\n\n- 这是 CI 里用来测试一键更新的假版本。\n- 下载、校验、替换、重新启动都会走一遍。",
            "assets":[{"name":"ProxySwitch-macos.zip","size":$size,"browser_download_url":"http://127.0.0.1:8765/ProxySwitch-macos.zip"},
+                     {"name":"ProxySwitch-macos-arm64.zip","size":$size,"browser_download_url":"http://127.0.0.1:8765/ProxySwitch-macos-arm64.zip"},
                      {"name":"SHA256SUMS.txt","size":100,"browser_download_url":"http://127.0.0.1:8765/SHA256SUMS.txt"}]}
           JSON
           (cd feed && python3 -m http.server 8765 --bind 127.0.0.1 >/dev/null 2>&1 &)
@@ -147,10 +156,45 @@ jobs:
           echo "================"
           [ "$version" = "9.9.9" ] || { echo "程序没有被替换成 9.9.9（现在是 $version）"; exit 1; }
           grep -q "已启动，版本 9.9.9" "$support/proxyswitch.log" || { echo "新版本没有重新启动"; exit 1; }
+          grep -q "下载 http://127.0.0.1:8765/ProxySwitch-macos-arm64.zip" "$support/proxyswitch.log" || { echo "没有下载本机架构的精简包"; exit 1; }
           pgrep -x ProxySwitch >/dev/null || { echo "更新后程序没有在运行"; exit 1; }
           codesign --verify --deep --strict dist/ProxySwitch.app
           ls -la dist
           pkill -x ProxySwitch || true
+          sleep 3
+          rm -rf dist/ProxySwitch.app
+
+          # 再模拟「在下载文件夹里直接打开、被系统搬到只读的临时位置运行」：更新应该装进「应用程序」、旧的那份移到废纸篓、从新位置重新打开。
+          rm -rf /Applications/ProxySwitch.app
+          : > "$support/proxyswitch.log"
+          PROXYSWITCH_UPDATE_URL=http://127.0.0.1:8765/latest.json PROXYSWITCH_TEST_TRANSLOCATED=1 relocate-src/ProxySwitch.app/Contents/MacOS/ProxySwitch >/dev/null 2>&1 &
+          for i in $(seq 1 20); do
+            grep -q "有新版本 9.9.9" "$support/proxyswitch.log" && break
+            sleep 1
+          done
+          app="$PWD/relocate-src/ProxySwitch.app"
+          open -a "$app" "proxyswitch://settings?page=about"; sleep 4
+          screencapture -x screenshots/about-relocate.png || true
+          open -a "$app" "proxyswitch://update"
+          version=""
+          for i in $(seq 1 60); do
+            version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" /Applications/ProxySwitch.app/Contents/Info.plist 2>/dev/null || true)
+            if [ "$version" = "9.9.9" ] && grep -q "已启动，版本 9.9.9" "$support/proxyswitch.log"; then break; fi
+            sleep 1
+          done
+          sleep 3
+          echo "===== 日志（从临时位置运行） ====="
+          cat "$support/proxyswitch.log" || true
+          echo "================"
+          [ "$version" = "9.9.9" ] || { echo "没有装进「应用程序」（/Applications 里的版本是 $version）"; exit 1; }
+          [ ! -e "$app" ] || { echo "旧的那份没有移到废纸篓"; exit 1; }
+          grep -q "移到废纸篓" "$support/proxyswitch.log" || { echo "日志里没有移到废纸篓的记录"; exit 1; }
+          pgrep -f "/Applications/ProxySwitch.app/Contents/MacOS/ProxySwitch" >/dev/null || { echo "没有从「应用程序」重新打开"; exit 1; }
+          codesign --verify --deep --strict /Applications/ProxySwitch.app
+          if xattr /Applications/ProxySwitch.app | grep -q com.apple.quarantine; then echo "新程序还带着隔离标记"; exit 1; fi
+          pkill -x ProxySwitch || true
+          sleep 2
+          rm -rf /Applications/ProxySwitch.app
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -176,7 +220,7 @@ jobs:
             sips -Z 560 -s format jpeg -s formatOptions 65 panel-update-crop.png --out panel-update.jpg >/dev/null
           fi
           # 设置窗口居中，裁到窗口附近再缩小，日志里放得下、看得清。
-          for name in settings sync nodes about about-after; do
+          for name in settings sync nodes about about-after about-relocate; do
             [ -f "$name.png" ] || continue
             width=$(sips -g pixelWidth "$name.png" | awk '/pixelWidth/{print $2}')
             height=$(sips -g pixelHeight "$name.png" | awk '/pixelHeight/{print $2}')
@@ -186,7 +230,7 @@ jobs:
             fi
             sips -Z 1000 -s format jpeg -s formatOptions 60 "$name-crop.png" --out "$name.jpg" >/dev/null
           done
-          for name in settings panel about-after panel-update about sync nodes; do
+          for name in settings sync nodes about-after panel about panel-update about-relocate; do
             [ -f "$name.jpg" ] || continue
             echo "=====BEGIN $name.jpg====="
             base64 -b 76 -i "$name.jpg"

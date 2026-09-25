@@ -44,10 +44,11 @@ jobs:
           swift --version
       - name: 单元测试
         run: swift test
-      - name: 打包通用二进制的 .app
+      - name: 打包通用二进制的 .app 和单架构的精简包
         run: |
-          VERSION="${TAG#v}" Scripts/build-app.sh
-          cd dist && shasum -a 256 ProxySwitch-macos.zip > SHA256SUMS.txt && cat SHA256SUMS.txt
+          VERSION="${TAG#v}" THIN_ARCHIVES=1 Scripts/build-app.sh
+          cd dist && shasum -a 256 ProxySwitch-macos.zip ProxySwitch-macos-arm64.zip ProxySwitch-macos-x86_64.zip > SHA256SUMS.txt && cat SHA256SUMS.txt
+          ls -la *.zip
       - name: 发布
         env:
           GH_TOKEN: ${{ github.token }}
@@ -57,6 +58,6 @@ jobs:
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --draft --title "ProxySwitch for Mac $TAG" --notes-file notes.md
           fi
-          gh release upload "$TAG" dist/ProxySwitch-macos.zip dist/SHA256SUMS.txt --clobber
+          gh release upload "$TAG" dist/ProxySwitch-macos.zip dist/ProxySwitch-macos-arm64.zip dist/ProxySwitch-macos-x86_64.zip dist/SHA256SUMS.txt --clobber
           gh release edit "$TAG" --draft=false --latest
           echo "已发布到 https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG"

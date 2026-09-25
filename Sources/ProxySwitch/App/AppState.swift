@@ -87,7 +87,12 @@ final class AppState: ObservableObject {
         refresh()
         Task { await checkHealth() }
         updater.notify = { [weak self] title, body in
-            self?.notify(title: title, body: body, problem: false, route: "about")
+            self?.notify(title: title, body: body, problem: false, route: "about", category: Notifier.updateCategory)
+        }
+        // 内置代理在跑时，更新先经它访问 GitHub（没开系统代理也能下载），失败再试系统代理和直连。
+        updater.routesProvider = { [weak self] url in
+            let corePort = (self?.engine.isRunning ?? false) ? self?.config.engine.mixedPort : nil
+            return NetworkRoute.routes(for: url, corePort: corePort, system: SystemProxy.current())
         }
         updater.onRelaunch = { [weak self] in
             self?.relaunching = true
@@ -477,13 +482,13 @@ final class AppState: ObservableObject {
 
     // MARK: - 通知与退出
 
-    func notify(title: String, body: String, problem: Bool, route: String? = nil) {
+    func notify(title: String, body: String, problem: Bool, route: String? = nil, category: String? = nil) {
         switch config.notifyLevel {
         case .none: return
         case .problems where !problem: return
         default: break
         }
-        Notifier.shared.show(title: title, body: body, route: route)
+        Notifier.shared.show(title: title, body: body, route: route, category: category)
     }
 
     /// 退出时按设置关闭代理，并停掉内核。

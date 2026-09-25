@@ -25,6 +25,23 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     private var authorizationRequested = false
     /// 用户点了通知；参数是发通知时给的 route（比如 "about"），用来决定打开哪一页。
     var onOpen: (@MainActor (String?) -> Void)?
+    /// 用户点了通知上的按钮（比如「立即更新」），参数是按钮的标识。
+    var onAction: (@MainActor (String) -> Void)?
+
+    /// 更新通知：带一个「立即更新」按钮。
+    static let updateCategory = "update"
+    static let installUpdateAction = "install-update"
+
+    /// 启动时调用：先设好 delegate 和通知按钮，程序重启后点旧通知也能收到（不会弹权限请求）。
+    func start() {
+        guard available else { return }
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        let install = UNNotificationAction(identifier: Self.installUpdateAction, title: "立即更新", options: [])
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: Self.updateCategory, actions: [install], intentIdentifiers: [], options: []),
+        ])
+    }
 
     func prepare() {
         guard available, !authorizationRequested else { return }
@@ -40,7 +57,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    func show(title: String, body: String, route: String? = nil) {
+    func show(title: String, body: String, route: String? = nil, category: String? = nil) {
         guard available else {
             Log.info("通知（没有 bundle，不显示）：\(title) \(body)")
             return
@@ -51,6 +68,9 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         content.body = body
         if let route {
             content.userInfo = ["route": route]
+        }
+        if let category {
+            content.categoryIdentifier = category
         }
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request) { error in
@@ -65,9 +85,12 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
-        if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+        let action = response.actionIdentifier
+        if action == UNNotificationDefaultActionIdentifier {
             let route = response.notification.request.content.userInfo["route"] as? String
             Task { @MainActor in self.onOpen?(route) }
+        } else if action != UNNotificationDismissActionIdentifier {
+            Task { @MainActor in self.onAction?(action) }
         }
         completionHandler()
     }

@@ -23,11 +23,17 @@ final class Updater: ObservableObject {
     @Published private(set) var lastChecked: Date?
     /// 最近一次检查失败的原因（手动检查时显示）。
     @Published private(set) var checkError: String?
+    /// 正在下载用的线路（内置代理、系统代理、直连）。
+    @Published private(set) var route: NetworkRoute?
+    /// 最近一次安装失败的原因，界面据此给出对应的按钮。
+    @Published private(set) var lastFailure: UpdateError?
 
     /// 自动检查发现新版本时通知（标题、正文）。
     var notify: (@MainActor (String, String) -> Void)?
     /// 新程序已经换好、该退出了。
     var onRelaunch: (@MainActor () -> Void)?
+    /// 访问某个地址时依次尝试的线路；没设置时只用系统代理设置。
+    var routesProvider: (@MainActor (URL) -> [NetworkRoute])?
 
     static let checkInterval: TimeInterval = 6 * 3600
     private static let skippedKey = "update.skippedVersion"
@@ -54,9 +60,23 @@ final class Updater: ObservableObject {
         }
     }
 
-    /// 就地更新做不到时的原因（不是从 .app 运行、被系统搬到了只读的临时位置）。
+    /// 更新装到哪里（启动后不会变，算一次就够）。
+    private(set) lazy var plan: InstallPlan? = InstallLocation.current()
+
+    /// 没法在程序里更新的原因：只有不是从 .app 运行（开发时 swift run）才会这样。
     var installProblem: String? {
-        Installability.check(bundleURL: Bundle.main.bundleURL).problem
+        plan == nil ? "不是从 ProxySwitch.app 运行的，没法在程序里更新" : nil
+    }
+
+    /// 从下载文件夹这类临时位置运行时，更新会装进「应用程序」。
+    var relocationNote: String? {
+        guard let plan, plan.relocating else { return nil }
+        let folder = InstallLocation.displayName(of: plan.target.deletingLastPathComponent())
+        return "现在是从下载文件夹这类临时位置运行的，这次会装进\(folder)" + (plan.trashAfter == nil ? "" : "，旧的那份移到废纸篓")
+    }
+
+    private func routes(for url: URL) -> [NetworkRoute] {
+        routesProvider?(url) ?? [.system]
     }
 
     var skippedVersion: String? {
@@ -89,7 +109,7 @@ final class Updater: ObservableObject {
         phase = .checking
         checkError = nil
         do {
-            let latest = try await UpdateChecker.latest()
+            let latest = try await UpdateChecker.latest(routes: routes(for: UpdateChecker.apiURL))
             lastChecked = Date()
             let current = UpdateChecker.currentVersion
             guard UpdateChecker.isNewer(latest.version, than: current) else {
@@ -106,7 +126,7 @@ final class Updater: ObservableObject {
             phase = .available(latest)
             if !manual, UserDefaults.standard.string(forKey: Self.notifiedKey) != latest.version {
                 UserDefaults.standard.set(latest.version, forKey: Self.notifiedKey)
-                notify?("ProxySwitch 有新版本 \(latest.version)", "点击查看更新内容，可以一键安装")
+                notify?("ProxySwitch 有新版本 \(latest.version)", "点「立即更新」自动下载安装并重新启动，点通知本身查看更新内容")
             }
             return latest
         } catch {
@@ -136,11 +156,13 @@ final class Updater: ObservableObject {
     /// 下载并安装 release（当前发现的新版本），完成后重新启动。
     func install() {
         guard let release, !isInstalling, installTask == nil else { return }
+        lastFailure = nil
         if let problem = installProblem {
             phase = .failed(release, problem)
             return
         }
         guard release.canInstall else {
+            lastFailure = .noArchive
             phase = .failed(release, UpdateError.noArchive.localizedDescription)
             return
         }
@@ -153,8 +175,10 @@ final class Updater: ObservableObject {
                 self.phase = .available(release)
             } catch {
                 Log.error("更新到 \(release.version) 失败：\(error.localizedDescription)")
+                self.lastFailure = error as? UpdateError
                 self.phase = .failed(release, error.localizedDescription)
             }
+            self.route = nil
             self.installTask = nil
         }
     }
@@ -163,18 +187,19 @@ final class Updater: ObservableObject {
         installTask?.cancel()
     }
 
-    /// 检查并直接安装（proxyswitch://update）。
+    /// 检查并直接安装（proxyswitch://update、通知里的「立即更新」）。已经知道有新版本时不再重复检查。
     func checkAndInstall() async {
         if case .skipped = phase {
             showSkippedVersion()
-        } else {
+        }
+        if release == nil {
             await check(manual: true)
         }
         install()
     }
 
     private func perform(_ release: ReleaseInfo) async throws {
-        guard case .ok(let target) = Installability.check(bundleURL: Bundle.main.bundleURL) else {
+        guard let plan = InstallLocation.current() else {
             throw UpdateError.notInstallable(installProblem ?? "")
         }
         guard let archiveURL = release.archiveURL, let checksumsURL = release.checksumsURL else {
@@ -185,28 +210,55 @@ final class Updater: ObservableObject {
         try fm.createDirectory(at: workDir, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: workDir) }
 
-        Log.info("开始更新到 \(release.version)：下载 \(archiveURL.absoluteString)")
-        phase = .downloading(release, nil)
-        let archive = workDir.appendingPathComponent(UpdateChecker.archiveName)
-        try await UpdateInstaller.download(archiveURL, expectedSize: release.archiveSize, to: archive) { [weak self] fraction in
-            Task { @MainActor in
-                guard let self, case .downloading = self.phase else { return }
-                self.phase = .downloading(release, fraction)
-            }
-        }
+        let archive = workDir.appendingPathComponent(release.archiveName ?? UpdateChecker.archiveName)
+        try await download(release, from: archiveURL, to: archive)
         try Task.checkCancellation()
         phase = .verifying(release)
-        try await UpdateInstaller.verify(archive: archive, checksumsURL: checksumsURL)
+        try await UpdateInstaller.verify(archive: archive, checksumsURL: checksumsURL, routes: routes(for: checksumsURL))
         let app = try await UpdateInstaller.extract(archive: archive, to: workDir.appendingPathComponent("extracted", isDirectory: true))
         try await UpdateInstaller.validate(app: app, expectedVersion: release.version)
         try Task.checkCancellation()
         phase = .installing(release)
-        try await UpdateInstaller.install(newApp: app, replacing: target)
+        try await UpdateInstaller.install(newApp: app, replacing: plan.target)
         try? fm.removeItem(at: workDir)
-        Log.info("已更新到 \(release.version)，重新启动")
+        if let old = plan.trashAfter {
+            do {
+                try fm.trashItem(at: old, resultingItemURL: nil)
+                Log.info("已把旧版本 \(old.path) 移到废纸篓")
+            } catch {
+                Log.error("旧版本 \(old.path) 没能移到废纸篓：\(error.localizedDescription)")
+            }
+        }
+        Log.info("已更新到 \(release.version)（\(plan.target.path)），重新启动")
         phase = .relaunching(release)
-        UpdateInstaller.relaunch(target)
+        UpdateInstaller.relaunch(plan.target)
         try? await Task.sleep(for: .milliseconds(600))
         onRelaunch?()
+    }
+
+    /// 依次经各条线路下载，一条失败就换下一条。
+    private func download(_ release: ReleaseInfo, from url: URL, to archive: URL) async throws {
+        var lastError: Error = UpdateError.badResponse
+        for route in routes(for: url) {
+            self.route = route
+            phase = .downloading(release, nil)
+            Log.info("开始更新到 \(release.version)：经\(route.title)下载 \(url.absoluteString)")
+            do {
+                try await UpdateInstaller.download(url, expectedSize: release.archiveSize, to: archive, route: route) { [weak self] fraction in
+                    Task { @MainActor in
+                        guard let self, case .downloading = self.phase else { return }
+                        self.phase = .downloading(release, fraction)
+                    }
+                }
+                return
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                Log.error("经\(route.title)下载失败：\(error.localizedDescription)")
+                lastError = error
+                try? FileManager.default.removeItem(at: archive)
+            }
+        }
+        throw lastError
     }
 }

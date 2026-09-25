@@ -31,28 +31,112 @@ enum Checksums {
     }
 }
 
-/// 当前程序能不能就地替换。
-enum Installability: Equatable {
-    case ok(URL)
-    /// 不是从 .app 运行（swift run）。
-    case notBundle
-    /// 被系统搬到了只读的临时位置（在下载文件夹里直接打开的程序会这样）。
-    case translocated
+/// 系统的「App Translocation」：带隔离标记、又没在访达里挪过位置的程序（比如在下载文件夹里直接打开的），
+/// 会从一个只读的临时位置运行。用 Security 框架的函数判断，并找回它原来的位置。
+enum Translocation {
+    private typealias IsTranslocatedURL = @convention(c) (CFURL, UnsafeMutablePointer<Bool>, UnsafeMutablePointer<Unmanaged<CFError>?>?) -> UInt8
+    private typealias CreateOriginalPathForURL = @convention(c) (CFURL, UnsafeMutablePointer<Unmanaged<CFError>?>?) -> Unmanaged<CFURL>?
 
-    static func check(bundleURL: URL) -> Installability {
-        guard bundleURL.pathExtension == "app" else { return .notBundle }
-        if bundleURL.path.contains("/AppTranslocation/") {
-            return .translocated
-        }
-        return .ok(bundleURL)
+    private static let handle = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY)
+
+    private static func symbol(_ name: String) -> UnsafeMutableRawPointer? {
+        guard let handle else { return nil }
+        return dlsym(handle, name)
     }
 
-    var problem: String? {
-        switch self {
-        case .ok: return nil
-        case .notBundle: return "不是从 ProxySwitch.app 运行的，没法就地更新，请到发布页下载"
-        case .translocated: return "程序正从只读的临时位置运行（通常是在下载文件夹里直接打开的），请先把 ProxySwitch.app 移到「应用程序」再更新"
+    static var available: Bool {
+        symbol("SecTranslocateIsTranslocatedURL") != nil && symbol("SecTranslocateCreateOriginalPathForURL") != nil
+    }
+
+    static func isTranslocated(_ url: URL) -> Bool {
+        if url.path.contains("/AppTranslocation/") {
+            return true
         }
+        guard let pointer = symbol("SecTranslocateIsTranslocatedURL") else { return false }
+        let function = unsafeBitCast(pointer, to: IsTranslocatedURL.self)
+        var translocated = false
+        _ = function(url as CFURL, &translocated, nil)
+        return translocated
+    }
+
+    /// 被搬走之前的位置，例如 ~/Downloads/ProxySwitch.app。
+    static func originalURL(of url: URL) -> URL? {
+        guard let pointer = symbol("SecTranslocateCreateOriginalPathForURL") else { return nil }
+        let function = unsafeBitCast(pointer, to: CreateOriginalPathForURL.self)
+        guard let original = function(url as CFURL, nil)?.takeRetainedValue() else { return nil }
+        return (original as URL).standardizedFileURL
+    }
+}
+
+/// 更新装到哪里。
+struct InstallPlan: Equatable {
+    /// 新版本放在这里，也从这里重新打开。
+    var target: URL
+    /// 装好后移到废纸篓的旧程序（从下载文件夹这类地方搬进「应用程序」时）。
+    var trashAfter: URL?
+    /// 从临时位置搬进「应用程序」，而不是原地替换。
+    var relocating: Bool
+}
+
+/// 平时原地替换；从只读的临时位置运行时（系统搬走了、或者在只读的磁盘上），装进「应用程序」。
+enum InstallLocation {
+    static let appName = "ProxySwitch.app"
+    /// 测试用：当作从临时位置运行，原来的位置就是现在这个。
+    static let testTranslocatedVariable = "PROXYSWITCH_TEST_TRANSLOCATED"
+
+    static var applicationsFolders: [URL] {
+        [
+            URL(fileURLWithPath: "/Applications", isDirectory: true),
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true),
+        ]
+    }
+
+    static func current(bundle: URL = Bundle.main.bundleURL) -> InstallPlan? {
+        let testing = ProcessInfo.processInfo.environment[testTranslocatedVariable] == "1"
+        let translocated = testing || Translocation.isTranslocated(bundle)
+        let original = testing ? bundle.standardizedFileURL : (translocated ? Translocation.originalURL(of: bundle) : nil)
+        let readOnly = (try? bundle.resourceValues(forKeys: [.volumeIsReadOnlyKey]))?.volumeIsReadOnly ?? false
+        return plan(bundle: bundle, translocated: translocated, original: original, readOnly: readOnly, folders: applicationsFolders, canWrite: canWrite)
+    }
+
+    /// 纯逻辑，便于测试。folders 按优先顺序，canWrite 判断能不能不用管理员密码写进去。
+    static func plan(bundle: URL, translocated: Bool, original: URL?, readOnly: Bool, folders: [URL], canWrite: (URL) -> Bool) -> InstallPlan? {
+        guard bundle.pathExtension == "app" else { return nil }
+        guard translocated || readOnly else {
+            return InstallPlan(target: bundle, trashAfter: nil, relocating: false)
+        }
+        if let original {
+            let parent = original.deletingLastPathComponent().standardizedFileURL.path
+            if folders.contains(where: { $0.standardizedFileURL.path == parent }) {
+                // 本来就在「应用程序」里，只是带着隔离标记被系统搬到临时位置运行：原地替换。
+                return InstallPlan(target: original, trashAfter: nil, relocating: false)
+            }
+        }
+        guard let first = folders.first else { return nil }
+        let folder = folders.first(where: canWrite) ?? first
+        let target = folder.appendingPathComponent(appName, isDirectory: true).standardizedFileURL
+        let trash = original.flatMap { $0.standardizedFileURL == target ? nil : $0 }
+        return InstallPlan(target: target, trashAfter: trash, relocating: true)
+    }
+
+    /// 不用管理员密码能不能写：文件夹存在时看它本身，不存在时看能不能建出来。
+    static func canWrite(_ folder: URL) -> Bool {
+        let fm = FileManager.default
+        var isDirectory: ObjCBool = false
+        if fm.fileExists(atPath: folder.path, isDirectory: &isDirectory) {
+            return isDirectory.boolValue && fm.isWritableFile(atPath: folder.path)
+        }
+        return fm.isWritableFile(atPath: folder.deletingLastPathComponent().path)
+    }
+
+    /// 界面上怎么称呼这个文件夹。
+    static func displayName(of folder: URL) -> String {
+        let path = folder.standardizedFileURL.path
+        if path == "/Applications" { return "「应用程序」" }
+        if path == FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications").standardizedFileURL.path {
+            return "个人的「应用程序」（~/Applications）"
+        }
+        return (path as NSString).abbreviatingWithTildeInPath
     }
 }
 
@@ -62,12 +146,14 @@ enum UpdateInstaller {
     static let xattrPath = "/usr/bin/xattr"
     static let codesignPath = "/usr/bin/codesign"
 
-    /// 下载到 destination，progress 收到 0…1 的进度（总大小未知时是 nil）。
-    static func download(_ url: URL, expectedSize: Int?, to destination: URL, progress: @escaping @Sendable (Double?) -> Void) async throws {
+    /// 经 route 下载到 destination，progress 收到 0…1 的进度（总大小未知时是 nil）。
+    static func download(_ url: URL, expectedSize: Int?, to destination: URL, route: NetworkRoute, progress: @escaping @Sendable (Double?) -> Void) async throws {
         let delegate = DownloadDelegate(destination: destination, expectedSize: expectedSize, progress: progress)
         let configuration = URLSessionConfiguration.ephemeral
+        // 30 秒没有任何数据才算超时；整个下载最长一小时（慢网络下几十 MB 也够）。
         configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 15 * 60
+        configuration.timeoutIntervalForResource = 3600
+        route.apply(to: configuration)
         let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
         var request = URLRequest(url: url)
@@ -82,20 +168,41 @@ enum UpdateInstaller {
         }
     }
 
-    /// 下载校验文件并比对 zip 的 SHA-256。
-    static func verify(archive: URL, checksumsURL: URL) async throws {
-        var request = URLRequest(url: checksumsURL)
-        request.setValue(UpdateChecker.userAgent, forHTTPHeaderField: "User-Agent")
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.timeoutInterval = 30
-        let (data, response) = try await URLSession.shared.data(for: request)
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw UpdateError.server(http.statusCode)
+    /// 下载校验文件（依次试各条线路）并比对压缩包的 SHA-256。
+    static func verify(archive: URL, checksumsURL: URL, routes: [NetworkRoute]) async throws {
+        var text: String?
+        var lastError: Error = UpdateError.badResponse
+        for route in routes {
+            do {
+                text = try await fetchText(checksumsURL, route: route)
+                break
+            } catch {
+                Log.info("经\(route.title)下载校验文件失败：\(error.localizedDescription)")
+                lastError = error
+            }
         }
-        let expected = Checksums.parse(String(decoding: data, as: UTF8.self))
+        guard let text else { throw lastError }
+        let expected = Checksums.parse(text)
         guard let hash = expected[archive.lastPathComponent] else { throw UpdateError.checksumsMissing }
         let actual = try Checksums.sha256(of: archive)
         guard actual == hash else { throw UpdateError.checksumMismatch }
+    }
+
+    private static func fetchText(_ url: URL, route: NetworkRoute) async throws -> String {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 20
+        configuration.timeoutIntervalForResource = 60
+        route.apply(to: configuration)
+        let session = URLSession(configuration: configuration)
+        defer { session.finishTasksAndInvalidate() }
+        var request = URLRequest(url: url)
+        request.setValue(UpdateChecker.userAgent, forHTTPHeaderField: "User-Agent")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        let (data, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw UpdateError.server(http.statusCode)
+        }
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// 解压到 directory，返回里面的 .app。
@@ -105,7 +212,7 @@ enum UpdateInstaller {
         guard result.succeeded else { throw UpdateError.extract(result.trimmedOutput) }
         let items = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
         guard let app = items.first(where: { $0.pathExtension == "app" }) else { throw UpdateError.appNotFound }
-        // 自己下载并校验过的更新，去掉隔离标记，否则换上去之后系统会再拦一次。
+        // 自己下载并校验过的更新，去掉隔离标记，否则换上去之后系统会再拦一次，还会被搬到临时位置运行。
         _ = try? await Shell.run(xattrPath, ["-dr", "com.apple.quarantine", app.path])
         return app
     }
@@ -129,15 +236,18 @@ enum UpdateInstaller {
         guard result.succeeded else { throw UpdateError.wrongApp("签名校验失败：\(result.trimmedOutput)") }
     }
 
-    /// 把 newApp 换到 target 的位置：先挪到同一个目录里的隐藏名字，再改名，失败就换回去。
-    /// 目录没有写权限（标准账户装在「应用程序」里）时，改用系统的授权对话框以管理员身份做同样的事。
+    /// 把 newApp 放到 target：先挪到同一个文件夹里的隐藏名字，旧的（有的话）挪开，再改名，失败就换回去。
+    /// target 所在文件夹没有写权限（标准账户装在「应用程序」里）时，用系统的授权对话框以管理员身份做同样的事。
     static func install(newApp: URL, replacing target: URL) async throws {
         let parent = target.deletingLastPathComponent()
         let staged = parent.appendingPathComponent(".\(target.lastPathComponent).update")
         let backup = parent.appendingPathComponent(".\(target.lastPathComponent).previous")
         do {
             try swap(newApp: newApp, target: target, staged: staged, backup: backup)
-        } catch let error as NSError where isPermissionError(error) {
+        } catch let error as NSError where isBlockedBySystem(error) {
+            Log.error("替换程序被系统拒绝：\(error.localizedDescription)")
+            throw UpdateError.appManagement
+        } catch let error as NSError where needsAdmin(error) {
             Log.info("替换程序需要管理员权限，改用授权对话框（\(error.localizedDescription)）")
             let source = FileManager.default.fileExists(atPath: staged.path) ? staged : newApp
             try await swapPrivileged(source: source, target: target, staged: staged, backup: backup)
@@ -148,28 +258,34 @@ enum UpdateInstaller {
 
     private static func swap(newApp: URL, target: URL, staged: URL, backup: URL) throws {
         let fm = FileManager.default
+        try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? fm.removeItem(at: staged)
         try? fm.removeItem(at: backup)
         try fm.moveItem(at: newApp, to: staged)
-        try fm.moveItem(at: target, to: backup)
+        let hadTarget = fm.fileExists(atPath: target.path)
+        if hadTarget {
+            try fm.moveItem(at: target, to: backup)
+        }
         do {
             try fm.moveItem(at: staged, to: target)
         } catch {
-            try? fm.moveItem(at: backup, to: target)
+            if hadTarget {
+                try? fm.moveItem(at: backup, to: target)
+            }
             throw error
         }
-        try? fm.removeItem(at: backup)
+        if hadTarget {
+            try? fm.removeItem(at: backup)
+        }
     }
 
     private static func swapPrivileged(source: URL, target: URL, staged: URL, backup: URL) async throws {
         let q = Shell.shellQuote
-        let script = [
-            "rm -rf \(q(staged.path)) \(q(backup.path))",
-            "mv \(q(source.path)) \(q(staged.path))",
-            "mv \(q(target.path)) \(q(backup.path))",
-            "{ mv \(q(staged.path)) \(q(target.path)) || { mv \(q(backup.path)) \(q(target.path)); exit 1; }; }",
-            "rm -rf \(q(backup.path))",
-        ].joined(separator: " && ")
+        let (s, t, b) = (q(staged.path), q(target.path), q(backup.path))
+        let script = "rm -rf \(s) \(b) && mkdir -p \(q(target.deletingLastPathComponent().path)) && mv \(q(source.path)) \(s)"
+            + " && { [ ! -e \(t) ] || mv \(t) \(b); }"
+            + " && { mv \(s) \(t) || { [ ! -e \(b) ] || mv \(b) \(t); exit 1; }; }"
+            + " && rm -rf \(b)"
         let appleScript = "do shell script " + Shell.appleScriptString(script) + " with administrator privileges"
         let result = try await Shell.run(SystemProxy.osascriptPath, ["-e", appleScript], timeout: 300)
         guard result.succeeded else {
@@ -177,22 +293,35 @@ enum UpdateInstaller {
             if text.contains("-128") {
                 throw UpdateError.cancelledByUser
             }
+            if text.localizedCaseInsensitiveContains("Operation not permitted") {
+                throw UpdateError.appManagement
+            }
             throw UpdateError.install(text)
         }
     }
 
-    static func isPermissionError(_ error: NSError) -> Bool {
-        if error.domain == NSCocoaErrorDomain,
-           [NSFileReadNoPermissionError, NSFileWriteNoPermissionError, NSFileWriteVolumeReadOnlyError].contains(error.code) {
-            return true
-        }
-        if error.domain == NSPOSIXErrorDomain, [Int(EACCES), Int(EPERM), Int(EROFS)].contains(error.code) {
-            return true
+    /// 错误里的 POSIX 错误码（FileManager 的错误通常包着一层）。
+    static func posixCode(_ error: NSError) -> Int? {
+        if error.domain == NSPOSIXErrorDomain {
+            return error.code
         }
         if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError {
-            return isPermissionError(underlying)
+            return posixCode(underlying)
         }
-        return false
+        return nil
+    }
+
+    /// 没有写权限（EACCES）：管理员身份可以做。
+    static func needsAdmin(_ error: NSError) -> Bool {
+        if let code = posixCode(error) {
+            return code == Int(EACCES)
+        }
+        return error.domain == NSCocoaErrorDomain && [NSFileWriteNoPermissionError, NSFileReadNoPermissionError].contains(error.code)
+    }
+
+    /// 系统保护（EPERM，比如「App 管理」权限）：管理员身份也做不了。
+    static func isBlockedBySystem(_ error: NSError) -> Bool {
+        posixCode(error) == Int(EPERM)
     }
 
     /// 等当前进程退出后再打开新程序：起一个独立的 sh 等着，自己退出时它不受影响。

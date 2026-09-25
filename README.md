@@ -20,7 +20,7 @@ Windows 版在 [proxyswitch](https://github.com/whrss9527/proxyswitch)，两边�
 - **登录时启动**：系统设置的「登录项」里可以看到和关闭。
 - **命令**：`open proxyswitch://toggle`、`proxyswitch://on`、`proxyswitch://off`、`proxyswitch://use?name=配置名`、`proxyswitch://settings`、`proxyswitch://update`，可以接快捷指令和脚本。
 - **iCloud 同步**：打开后代理配置和设置通过 iCloud 云盘（`iCloud 云盘/ProxySwitch/config.json`）在多台 Mac 之间同步，几秒内生效；另一台 Mac 开启时可以选用 iCloud 的、用本机的或合并，两边同时改以改动时间晚的为准。
-- **检查更新与一键更新**：启动后和每 6 小时检查一次 GitHub 上的新版本（可以关掉），有新版本时通知、面板里出现更新条。点「更新」会下载 zip、比对 SHA-256、就地替换 `ProxySwitch.app` 并自动重新启动；装在「应用程序」里的标准账户会弹一次系统授权对话框。
+- **检查更新与一键更新**：启动后和每 6 小时检查一次 GitHub 上的新版本（可以关掉），有新版本时通知（通知上直接有「立即更新」按钮），面板里出现更新条。点一下「更新」就会下载本机芯片的精简包、比对 SHA-256、替换 `ProxySwitch.app` 并自动重新启动，不用去下载页。内置代理在运行时经它下载，失败再试系统代理和直连。直接在下载文件夹里打开的程序会被装进「应用程序」，旧的那份移到废纸篓。
 
 ## 内置节点代理
 
@@ -32,10 +32,10 @@ Windows 版在 [proxyswitch](https://github.com/whrss9527/proxyswitch)，两边�
 
 ## 安装
 
-1. 在 [Releases](../../releases) 下载 `ProxySwitch-macos.zip`，解压后把 `ProxySwitch.app` 拖到「应用程序」。
+1. 在 [Releases](../../releases) 下载 `ProxySwitch-macos.zip`（通用包，Intel 和 Apple 芯片都能用；`-arm64` / `-x86_64` 结尾的是只含一种芯片的精简包，小一半），解压后把 `ProxySwitch.app` 拖到「应用程序」。
 2. 程序没有 Apple 开发者签名，第一次打开会被系统拦下：在 `ProxySwitch.app` 上右键 → 打开 → 再点「打开」；或者在终端运行 `xattr -dr com.apple.quarantine /Applications/ProxySwitch.app`。
 3. 需要 macOS 14 或更新版本。
-4. 之后的版本在程序里更新：有新版本时面板里会出现更新条，点「更新」就行；也可以在「关于」页手动检查。请把程序放在「应用程序」里再更新，直接在下载文件夹里打开的程序被系统放在只读的临时位置，没法就地替换。
+4. 之后的版本在程序里一键更新：有新版本时面板里会出现更新条，点「更新」就行，也可以在「关于」页或通知上点「立即更新」。如果程序是在下载文件夹里直接打开的（系统会把它放在只读的临时位置运行），更新时会自动装进「应用程序」，第一次可能会问能否访问「下载」文件夹（用来把旧的那份移到废纸篓）。
 
 ## 权限说明
 

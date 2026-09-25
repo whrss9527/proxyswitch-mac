@@ -208,14 +208,130 @@ final class ParsingTests: XCTestCase {
         XCTAssertEqual(try Checksums.sha256(of: file), "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03")
     }
 
-    func testInstallability() {
+    func testInstallPlan() {
+        let apps = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        let home = URL(fileURLWithPath: "/Users/me/Applications", isDirectory: true)
+        let folders = [apps, home]
+        let everything: (URL) -> Bool = { _ in true }
+        let onlyHome: (URL) -> Bool = { $0 == home }
         let installed = URL(fileURLWithPath: "/Applications/ProxySwitch.app")
-        XCTAssertEqual(Installability.check(bundleURL: installed), .ok(installed))
-        XCTAssertNil(Installability.check(bundleURL: installed).problem)
-        let translocated = URL(fileURLWithPath: "/private/var/folders/ab/T/AppTranslocation/1234-5678/d/ProxySwitch.app")
-        XCTAssertEqual(Installability.check(bundleURL: translocated), .translocated)
-        XCTAssertNotNil(Installability.check(bundleURL: translocated).problem)
-        XCTAssertEqual(Installability.check(bundleURL: URL(fileURLWithPath: "/Users/me/.build/debug")), .notBundle)
+        let downloads = URL(fileURLWithPath: "/Users/me/Downloads/ProxySwitch.app")
+        let translocated = URL(fileURLWithPath: "/private/var/folders/ab/T/AppTranslocation/1234/d/ProxySwitch.app")
+
+        // 平时：原地替换。
+        XCTAssertEqual(InstallLocation.plan(bundle: installed, translocated: false, original: nil, readOnly: false, folders: folders, canWrite: everything),
+                       InstallPlan(target: installed, trashAfter: nil, relocating: false))
+        // 在下载文件夹里直接打开（被系统搬到临时位置）：装进「应用程序」，旧的移到废纸篓。
+        XCTAssertEqual(InstallLocation.plan(bundle: translocated, translocated: true, original: downloads, readOnly: true, folders: folders, canWrite: everything),
+                       InstallPlan(target: installed, trashAfter: downloads, relocating: true))
+        // 标准账户写不了 /Applications：装进 ~/Applications，不用输密码。
+        XCTAssertEqual(InstallLocation.plan(bundle: translocated, translocated: true, original: downloads, readOnly: true, folders: folders, canWrite: onlyHome),
+                       InstallPlan(target: home.appendingPathComponent("ProxySwitch.app"), trashAfter: downloads, relocating: true))
+        // 本来就在「应用程序」里、只是带着隔离标记被搬走运行：原地替换。
+        XCTAssertEqual(InstallLocation.plan(bundle: translocated, translocated: true, original: installed, readOnly: true, folders: folders, canWrite: everything),
+                       InstallPlan(target: installed, trashAfter: nil, relocating: false))
+        // 找不到原来的位置：装进「应用程序」，不删别的。
+        XCTAssertEqual(InstallLocation.plan(bundle: translocated, translocated: true, original: nil, readOnly: true, folders: folders, canWrite: everything),
+                       InstallPlan(target: installed, trashAfter: nil, relocating: true))
+        // 浏览器给重名文件加了后缀：装回标准名字。
+        let renamed = URL(fileURLWithPath: "/Users/me/Downloads/ProxySwitch (1).app")
+        XCTAssertEqual(InstallLocation.plan(bundle: translocated, translocated: true, original: renamed, readOnly: true, folders: folders, canWrite: everything)?.target, installed)
+        // 只读的磁盘（比如挂载的映像）：也搬。
+        XCTAssertEqual(InstallLocation.plan(bundle: URL(fileURLWithPath: "/Volumes/PS/ProxySwitch.app"), translocated: false, original: nil, readOnly: true, folders: folders, canWrite: everything)?.relocating, true)
+        // 不是 .app（开发时 swift run）：没法更新。
+        XCTAssertNil(InstallLocation.plan(bundle: URL(fileURLWithPath: "/Users/me/.build/debug"), translocated: false, original: nil, readOnly: false, folders: folders, canWrite: everything))
+        XCTAssertEqual(InstallLocation.displayName(of: apps), "「应用程序」")
+    }
+
+    func testTranslocationLookup() {
+        // Security 框架里的函数要能找到，普通位置不算被搬走。
+        XCTAssertTrue(Translocation.available)
+        XCTAssertFalse(Translocation.isTranslocated(URL(fileURLWithPath: "/System/Applications/Calculator.app")))
+        XCTAssertTrue(Translocation.isTranslocated(URL(fileURLWithPath: "/private/var/folders/ab/T/AppTranslocation/1234/d/ProxySwitch.app")))
+    }
+
+    func testNetworkRoutes() {
+        let github = URL(string: "https://github.com/whrss9527/proxyswitch-mac/releases/download/v1/ProxySwitch-macos.zip")!
+        var off = ProxySnapshot()
+        off.httpEnabled = false
+        var coreProxy = ProxySnapshot()
+        coreProxy.httpEnabled = true; coreProxy.httpHost = "127.0.0.1"; coreProxy.httpPort = 7890
+        coreProxy.httpsEnabled = true; coreProxy.httpsHost = "127.0.0.1"; coreProxy.httpsPort = 7890
+        var other = ProxySnapshot()
+        other.httpsEnabled = true; other.httpsHost = "proxy.corp"; other.httpsPort = 3128
+
+        XCTAssertEqual(NetworkRoute.routes(for: github, corePort: 7890, system: off), [.core(7890), .direct])
+        XCTAssertEqual(NetworkRoute.routes(for: github, corePort: 7890, system: coreProxy), [.core(7890), .direct])
+        XCTAssertEqual(NetworkRoute.routes(for: github, corePort: 7890, system: other), [.core(7890), .system, .direct])
+        XCTAssertEqual(NetworkRoute.routes(for: github, corePort: nil, system: other), [.system, .direct])
+        XCTAssertEqual(NetworkRoute.routes(for: github, corePort: nil, system: off), [.direct])
+        // 本机地址（测试用的发布源）不经代理。
+        XCTAssertEqual(NetworkRoute.routes(for: URL(string: "http://127.0.0.1:8765/latest.json")!, corePort: 7890, system: other), [.direct])
+        XCTAssertTrue(coreProxy.pointsAtLocalhost(port: 7890))
+        XCTAssertFalse(coreProxy.pointsAtLocalhost(port: 7891))
+
+        let configuration = URLSessionConfiguration.ephemeral
+        NetworkRoute.core(7890).apply(to: configuration)
+        XCTAssertEqual(configuration.connectionProxyDictionary?[kCFNetworkProxiesHTTPSPort as String] as? Int, 7890)
+        NetworkRoute.direct.apply(to: configuration)
+        XCTAssertEqual(configuration.connectionProxyDictionary?.count, 0)
+        NetworkRoute.system.apply(to: configuration)
+        XCTAssertNil(configuration.connectionProxyDictionary)
+    }
+
+    func testThinArchiveSelection() throws {
+        let json = """
+        {"tag_name":"v0.5.0","assets":[
+          {"name":"ProxySwitch-macos.zip","size":49000000,"browser_download_url":"https://x/ProxySwitch-macos.zip"},
+          {"name":"ProxySwitch-macos-arm64.zip","size":25000000,"browser_download_url":"https://x/ProxySwitch-macos-arm64.zip"},
+          {"name":"SHA256SUMS.txt","size":300,"browser_download_url":"https://x/SHA256SUMS.txt"}]}
+        """
+        let arm = try XCTUnwrap(UpdateChecker.parse(Data(json.utf8), architecture: "arm64"))
+        XCTAssertEqual(arm.archiveName, "ProxySwitch-macos-arm64.zip")
+        XCTAssertEqual(arm.archiveSize, 25000000)
+        // 没有这个架构的精简包时用通用包。
+        let intel = try XCTUnwrap(UpdateChecker.parse(Data(json.utf8), architecture: "x86_64"))
+        XCTAssertEqual(intel.archiveName, "ProxySwitch-macos.zip")
+        XCTAssertTrue(["arm64", "x86_64"].contains(UpdateChecker.machineArchitecture))
+    }
+
+    func testPermissionErrorMapping() {
+        func cocoa(_ posix: Int32) -> NSError {
+            NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError, userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(posix))])
+        }
+        XCTAssertTrue(UpdateInstaller.needsAdmin(cocoa(EACCES)))
+        XCTAssertFalse(UpdateInstaller.isBlockedBySystem(cocoa(EACCES)))
+        XCTAssertTrue(UpdateInstaller.isBlockedBySystem(cocoa(EPERM)))
+        XCTAssertFalse(UpdateInstaller.needsAdmin(cocoa(EPERM)))
+        XCTAssertTrue(UpdateInstaller.needsAdmin(NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError)))
+        XCTAssertFalse(UpdateInstaller.needsAdmin(NSError(domain: NSCocoaErrorDomain, code: NSFileNoSuchFileError)))
+    }
+
+    func testInstallReplacesAndCreates() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("install-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+        func makeApp(_ url: URL, marker: String) throws {
+            try fm.createDirectory(at: url.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+            try Data(marker.utf8).write(to: url.appendingPathComponent("Contents/\(marker)"))
+        }
+        // 替换已有的。
+        let target = root.appendingPathComponent("Applications/ProxySwitch.app")
+        try makeApp(target, marker: "old")
+        let newApp = root.appendingPathComponent("download/ProxySwitch.app")
+        try makeApp(newApp, marker: "new")
+        try await UpdateInstaller.install(newApp: newApp, replacing: target)
+        XCTAssertTrue(fm.fileExists(atPath: target.appendingPathComponent("Contents/new").path))
+        XCTAssertFalse(fm.fileExists(atPath: target.appendingPathComponent("Contents/old").path))
+        XCTAssertFalse(fm.fileExists(atPath: newApp.path))
+        let leftovers = try fm.contentsOfDirectory(atPath: root.appendingPathComponent("Applications").path)
+        XCTAssertEqual(leftovers, ["ProxySwitch.app"])
+        // 目标文件夹还不存在（比如 ~/Applications）：建出来再放进去。
+        let fresh = root.appendingPathComponent("Home/Applications/ProxySwitch.app")
+        let another = root.appendingPathComponent("download2/ProxySwitch.app")
+        try makeApp(another, marker: "v2")
+        try await UpdateInstaller.install(newApp: another, replacing: fresh)
+        XCTAssertTrue(fm.fileExists(atPath: fresh.appendingPathComponent("Contents/v2").path))
     }
 
     func testSyncedConfigRoundTripAndMerge() throws {

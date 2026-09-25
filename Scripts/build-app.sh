@@ -3,6 +3,7 @@
 #   VERSION=1.0.0 Scripts/build-app.sh          发布构建
 #   CONFIG=debug ARCHS="" Scripts/build-app.sh   本机架构的调试构建
 #   SKIP_CORE=1 Scripts/build-app.sh             不下载内核（只能用外部代理的功能）
+#   THIN_ARCHIVES=1 Scripts/build-app.sh         另外打两个单架构的精简包（一键更新用，只有通用包一半大）
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -60,3 +61,38 @@ codesign --force --deep --sign "${CODESIGN_IDENTITY:--}" "$APP"
 
 (cd dist && rm -f ProxySwitch-macos.zip && ditto -c -k --keepParent ProxySwitch.app ProxySwitch-macos.zip)
 echo "已生成 ${APP} 和 dist/ProxySwitch-macos.zip（版本 ${VERSION}）"
+
+if [ -n "${THIN_ARCHIVES:-}" ]; then
+  # 从通用包里各取一种芯片的部分：内核占了包的大头，单架构的包只有一半大。
+  for arch in arm64 x86_64; do
+    dir="dist/thin-${arch}"
+    rm -rf "$dir" && mkdir -p "$dir"
+    ditto "$APP" "${dir}/ProxySwitch.app"
+    missing=""
+    for bin in "${dir}/ProxySwitch.app/Contents/MacOS/ProxySwitch" "${dir}/ProxySwitch.app/Contents/MacOS/mihomo"; do
+      [ -f "$bin" ] || continue
+      archs="$(lipo -archs "$bin")"
+      if [ "$archs" = "$arch" ]; then
+        continue
+      elif [[ " $archs " == *" $arch "* ]]; then
+        lipo "$bin" -thin "$arch" -output "${bin}.thin"
+        mv "${bin}.thin" "$bin"
+        chmod +x "$bin"
+      else
+        missing="$bin"
+      fi
+    done
+    if [ -n "$missing" ]; then
+      echo "跳过 ${arch} 精简包：${missing} 里没有这个架构"
+      rm -rf "$dir"
+      continue
+    fi
+    if [ -f "${dir}/ProxySwitch.app/Contents/MacOS/mihomo" ]; then
+      codesign --force --sign "${CODESIGN_IDENTITY:--}" "${dir}/ProxySwitch.app/Contents/MacOS/mihomo"
+    fi
+    codesign --force --deep --sign "${CODESIGN_IDENTITY:--}" "${dir}/ProxySwitch.app"
+    codesign --verify --deep --strict "${dir}/ProxySwitch.app"
+    (cd "$dir" && ditto -c -k --keepParent ProxySwitch.app "../ProxySwitch-macos-${arch}.zip")
+    echo "已生成 dist/ProxySwitch-macos-${arch}.zip：$(du -h "dist/ProxySwitch-macos-${arch}.zip" | cut -f1)"
+  done
+fi

@@ -97,7 +97,7 @@ struct UpdateBanner: View {
 
     private func title(_ release: ReleaseInfo) -> String {
         switch updater.phase {
-        case .downloading: return "正在下载 \(release.version)"
+        case .downloading: return "正在下载 \(release.version)" + (updater.route.map { " · 经\($0.title)" } ?? "")
         case .verifying: return "正在校验 \(release.version)"
         case .installing: return "正在安装 \(release.version)"
         case .relaunching: return "已更新到 \(release.version)，正在重新启动"
@@ -157,7 +157,7 @@ struct UpdateSection: View {
             case .available(let release):
                 availableView(release)
             case .downloading(let release, let fraction):
-                progressView(title: "正在下载 \(release.version)…", fraction: fraction, cancellable: true)
+                progressView(title: "正在下载 \(release.version)…" + (updater.route.map { "（经\($0.title)）" } ?? ""), fraction: fraction, cancellable: true)
             case .verifying(let release):
                 progressView(title: "正在校验 \(release.version)…", fraction: nil, cancellable: false)
             case .installing(let release):
@@ -214,12 +214,7 @@ struct UpdateSection: View {
                     .foregroundStyle(.orange)
                     .multilineTextAlignment(.center)
                 HStack(spacing: 10) {
-                    Button {
-                        NSWorkspace.shared.open(release.pageURL)
-                    } label: {
-                        Label("去发布页下载", systemImage: "arrow.down.circle")
-                    }
-                    .buttonStyle(.borderedProminent)
+                    Button("到发布页下载") { NSWorkspace.shared.open(release.pageURL) }
                     Button("跳过这个版本") { updater.skipAvailableVersion() }
                 }
             } else {
@@ -230,23 +225,37 @@ struct UpdateSection: View {
                         Label("立即更新", systemImage: "arrow.down.circle.fill")
                     }
                     .buttonStyle(.borderedProminent)
-                    Button("查看发布页") { NSWorkspace.shared.open(release.pageURL) }
+                    .keyboardShortcut(.defaultAction)
                     Button("跳过这个版本") { updater.skipAvailableVersion() }
                 }
                 Text(installHint(release))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                if let note = updater.relocationNote {
+                    Label(note, systemImage: "arrow.right.doc.on.clipboard")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                pageLink(release)
             }
         }
     }
 
+    /// 发布页只作为不显眼的备用入口。
+    private func pageLink(_ release: ReleaseInfo) -> some View {
+        Button("在浏览器里查看发布页") { NSWorkspace.shared.open(release.pageURL) }
+            .buttonStyle(.link)
+            .font(.caption)
+    }
+
     private func installHint(_ release: ReleaseInfo) -> String {
-        var text = "下载"
+        var text = "点一下就行：下载"
         if let size = release.archiveSize {
             text += " \(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))"
         }
-        return text + "后自动校验、替换程序并重新启动，配置不会丢。"
+        return text + "，校验后替换程序并自动重新启动，配置不会丢。内置代理在运行时经它下载。"
     }
 
     private func progressView(title: String, fraction: Double?, cancellable: Bool) -> some View {
@@ -277,12 +286,22 @@ struct UpdateSection: View {
                 .foregroundStyle(.red)
                 .multilineTextAlignment(.center)
             HStack(spacing: 10) {
+                if updater.lastFailure == .appManagement {
+                    Button("打开「App 管理」设置") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AppBundles")!)
+                    }
+                }
                 if release.canInstall, updater.installProblem == nil {
                     Button("重试") { updater.install() }
                         .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                } else {
+                    Button("到发布页下载") { NSWorkspace.shared.open(release.pageURL) }
                 }
-                Button("去发布页下载") { NSWorkspace.shared.open(release.pageURL) }
                 checkButton
+            }
+            if release.canInstall, updater.installProblem == nil {
+                pageLink(release)
             }
         }
     }

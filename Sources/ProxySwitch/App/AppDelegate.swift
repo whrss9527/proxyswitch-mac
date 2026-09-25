@@ -19,8 +19,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installSignalHandlers()
         MainMenu.install()
         let state = AppState.shared
+        Notifier.shared.start()
         Notifier.shared.onOpen = { route in
             SettingsWindowController.shared.show(page: route == "about" ? SettingsPage.about : SettingsPage.profiles)
+        }
+        // 通知上的「立即更新」：直接下载安装，进度在关于页和面板里。
+        Notifier.shared.onAction = { action in
+            guard action == Notifier.installUpdateAction else { return }
+            SettingsWindowController.shared.show(page: .about)
+            Task { await AppState.shared.updater.checkAndInstall() }
         }
         let controller = StatusItemController(state: state)
         statusController = controller
